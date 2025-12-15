@@ -11,3 +11,4 @@ repository_before/CrmData/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+

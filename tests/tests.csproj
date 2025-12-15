@@ -14,6 +14,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\\repository_before\\repository_before.csproj" />
-    <ProjectReference Include="..\\repository_after\\repository_after.csproj" />
+    <ProjectReference Include="..\\repository_after\\repository_after.csproj">
+      <Aliases>repository_after</Aliases>
+    </ProjectReference>
   </ItemGroup>
 </Project>

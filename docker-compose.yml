@@ -1,7 +1,22 @@
-version: '3'
+version: "3.9"
+
 services:
   app:
-    build: .
-    volumes:
-      - .:/app
-    command: ["dotnet", "run", "--project", "sw_crm_contact_search.csproj"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: sw_crm_contact_search:runtime
+    container_name: crm_contact_search_after
+    stdin_open: true
+    tty: true
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    image: sw_crm_contact_search:build
+    container_name: crm_contact_search_tests
+    command: ["dotnet", "test", "tests/tests.csproj", "-c", "Release", "-v", "minimal"]
+    working_dir: /src

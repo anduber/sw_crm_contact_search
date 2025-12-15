@@ -1,369 +1,515 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Distributed;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
-using System.Linq.Expressions;
-using System.Reflection.Emit;
 using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 
-namespace repository_optimized
+#nullable enable
+
+namespace repository_before
 {
-    // Enums remain unchanged
-    public enum DealStage { Prospect = 0, Qualified = 1, Proposal = 2, Negotiation = 3, ClosedWon = 4, ClosedLost = 5 }
-    public enum InteractionType { Email = 0, Call = 1, Meeting = 2, Demo = 3, Other = 4 }
-
-    // Normalized Entities (fixed many-to-many for tags)
-    public class Tag
+    public class CrmContactSearch
     {
-        public int Id { get; set; }
-        public string Name { get; set; } = string.Empty;
-        public ICollection<ContactTag> ContactTags { get; set; } = new List<ContactTag>();
-    }
-
-    public class ContactTag // Junction table for many-to-many
-    {
-        public int ContactId { get; set; }
-        public Contact Contact { get; set; } = null!;
-        public int TagId { get; set; }
-        public Tag Tag { get; set; } = null!;
-    }
-
-    public class Interaction
-    {
-        public int Id { get; set; }
-        public int ContactId { get; set; }
-        public InteractionType Type { get; set; }
-        public DateTime Date { get; set; }
-        public Contact Contact { get; set; } = null!;
-    }
-
-    public class Deal
-    {
-        public int Id { get; set; }
-        public int ContactId { get; set; }
-        public decimal? EstimatedValue { get; set; }
-        public Contact Contact { get; set; } = null!;
-    }
-
-    public class Contact
-    {
-        public int Id { get; set; }
-        public string FirstName { get; set; } = string.Empty;
-        public string LastName { get; set; } = string.Empty;
-        public string Email { get; set; } = string.Empty;
-        public string Company { get; set; } = string.Empty;
-        public string City { get; set; } = string.Empty;
-        public DateTime LastContactDate { get; set; }
-        public DealStage? DealStage { get; set; }
-        public decimal? BasePotentialValue { get; set; }
-
-        // Navigation properties (fixed for ORM efficiency)
-        public ICollection<ContactTag> ContactTags { get; set; } = new List<ContactTag>();
-        public ICollection<Interaction> Interactions { get; set; } = new List<Interaction>();
-        public ICollection<Deal> Deals { get; set; } = new List<Deal>();
-    }
-
-    // DTOs remain unchanged
-    public class ContactDto
-    {
-        public int Id { get; set; }
-        public string FullName { get; set; } = string.Empty;
-        public string Email { get; set; } = string.Empty;
-        public string Company { get; set; } = string.Empty;
-        public string City { get; set; } = string.Empty;
-        public DateTime LastContact { get; set; }
-        public decimal DealValue { get; set; }
-        public List<string> Tags { get; set; } = new List<string>();
-        public int InteractionCount { get; set; }
-    }
-
-    public class ContactSearchRequest
-    {
-        public string? City { get; set; }
-        public string? Tags { get; set; }
-        public DateTime? LastContactBefore { get; set; }
-        public DealStage? DealStage { get; set; }
-        public decimal? MinDealValue { get; set; }
-        public int Page { get; set; } = 1;
-        public int PageSize { get; set; } = 50;
-        public string? SortBy { get; set; } = "LastContactDate";
-        public bool SortDescending { get; set; } = true;
-    }
-
-    public class SearchResult
-    {
-        public int TotalCount { get; set; }
-        public int Page { get; set; }
-        public int PageSize { get; set; }
-        public List<ContactDto> Data { get; set; } = new List<ContactDto>();
-        public double ElapsedMilliseconds { get; set; }
-        public string? NextPageToken { get; set; } // For keyset pagination
-    }
-
-    // Production Database Context with Index Configuration
-    public class CrmDbContext : DbContext
-    {
-        public CrmDbContext(DbContextOptions<CrmDbContext> options) : base(options) { }
-
-        public DbSet<Contact> Contacts { get; set; } = null!;
-        public DbSet<Tag> Tags { get; set; } = null!;
-        public DbSet<ContactTag> ContactTags { get; set; } = null!;
-        public DbSet<Interaction> Interactions { get; set; } = null!;
-        public DbSet<Deal> Deals { get; set; } = null!;
-
-        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        public enum DealStage
         {
-            // Configure many-to-many
-            modelBuilder.Entity<ContactTag>()
-                .HasKey(ct => new { ct.ContactId, ct.TagId });
-
-            // Critical Indexes (tailored for common filters)
-            modelBuilder.Entity<Contact>()
-                .HasIndex(c => new { c.City, c.DealStage, c.LastContactDate }) // Composite index for frequent filters
-                .IncludeProperties(c => new { c.Id, c.FirstName, c.LastName, c.Email, c.Company, c.BasePotentialValue }); // Covering index
-
-            modelBuilder.Entity<ContactTag>()
-                .HasIndex(ct => ct.TagId); // Index for tag filtering
-
-            modelBuilder.Entity<Interaction>()
-                .HasIndex(i => i.ContactId)
-                .IncludeProperties(i => i.Type); // Covering index for interaction multiplier
-
-            modelBuilder.Entity<Deal>()
-                .HasIndex(d => d.ContactId)
-                .IncludeProperties(d => d.EstimatedValue); // Covering index for deal value calculation
-        }
-    }
-
-    // Optimized Search Service with Caching and Database-Level Operations
-    public class ContactSearcher
-    {
-        private readonly CrmDbContext _context;
-        private readonly IDistributedCache _cache;
-        private const string CachePrefix = "crm:contact-search:";
-        private const int CacheTtlSeconds = 300; // 5 minutes for frequent queries
-
-        public ContactSearcher(CrmDbContext context, IDistributedCache cache)
-        {
-            _context = context;
-            _cache = cache;
+            Prospect = 0,
+            Qualified = 1,
+            Proposal = 2,
+            Negotiation = 3,
+            ClosedWon = 4,
+            ClosedLost = 5
         }
 
-        public async Task<SearchResult> SearchContactsAsync(ContactSearchRequest request)
+        public enum InteractionType
         {
-            var startTime = DateTime.Now;
-            var cacheKey = GetCacheKey(request);
-
-            // Check cache for frequent queries
-            var cachedResult = await _cache.GetStringAsync(cacheKey);
-            if (cachedResult != null)
-            {
-                var result = JsonConvert.DeserializeObject<SearchResult>(cachedResult)!;
-                result.ElapsedMilliseconds = (DateTime.Now - startTime).TotalMilliseconds;
-                return result;
-            }
-
-            // Build query expression (database-level filtering)
-            var query = _context.Contacts.AsQueryable();
-            query = ApplyFilters(query, request);
-            query = ApplySorting(query, request);
-
-            // Get total count (efficient count with filtered query)
-            var totalCount = await query.CountAsync();
-
-            // Database-level pagination (LIMIT/OFFSET for PostgreSQL; use OFFSET/FETCH for SQL Server)
-            var pagedQuery = query
-                .Skip((request.Page - 1) * request.PageSize)
-                .Take(request.PageSize)
-                .Include(c => c.ContactTags) // Eager load to eliminate N+1
-                    .ThenInclude(ct => ct.Tag)
-                .Include(c => c.Interactions)
-                .Include(c => c.Deals);
-
-            // Project directly to DTO (avoids loading full entities)
-            var contactDtos = await pagedQuery.Select(c => new ContactDto
-            {
-                Id = c.Id,
-                FullName = $"{c.FirstName} {c.LastName}",
-                Email = c.Email,
-                Company = c.Company,
-                City = c.City,
-                LastContact = c.LastContactDate,
-                Tags = c.ContactTags.Select(ct => ct.Tag.Name).ToList(),
-                InteractionCount = c.Interactions.Count,
-                DealValue = CalculatePotentialDealValue(c) // Cached below
-            }).ToListAsync();
-
-            // Cache expensive DealValue calculations (per contact)
-            await CacheDealValues(contactDtos);
-
-            var result = new SearchResult
-            {
-                TotalCount = totalCount,
-                Page = request.Page,
-                PageSize = request.PageSize,
-                Data = contactDtos,
-                ElapsedMilliseconds = (DateTime.Now - startTime).TotalMilliseconds,
-                NextPageToken = GetNextPageToken(request, totalCount)
-            };
-
-            // Cache the full result for frequent queries
-            await _cache.SetStringAsync(cacheKey, JsonConvert.SerializeObject(result), new DistributedCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(CacheTtlSeconds),
-                SlidingExpiration = TimeSpan.FromSeconds(60)
-            });
-
-            return result;
+            Email = 0,
+            Call = 1,
+            Meeting = 2,
+            Demo = 3,
+            Other = 4
         }
 
-        private IQueryable<Contact> ApplyFilters(IQueryable<Contact> query, ContactSearchRequest request)
+        // Entities (keep structure close to your original; add Metrics for cached calculations)
+        public class Contact
         {
-            if (!string.IsNullOrEmpty(request.City))
-                query = query.Where(c => c.City == request.City);
+            public int Id { get; set; }
+            public string FirstName { get; set; } = string.Empty;
+            public string LastName { get; set; } = string.Empty;
+            public string Email { get; set; } = string.Empty;
+            public string Company { get; set; } = string.Empty;
+            public string City { get; set; } = string.Empty;
+            public DateTime LastContactDate { get; set; }
+            public DealStage? DealStage { get; set; }
+            public decimal? BasePotentialValue { get; set; }
 
-            if (!string.IsNullOrEmpty(request.Tags))
-            {
-                var tagNames = request.Tags.Split(',').Select(t => t.Trim()).ToList();
-                query = query.Where(c => c.ContactTags.Any(ct => tagNames.Contains(ct.Tag.Name)));
-            }
+            public List<Tag> Tags { get; set; } = new();
+            public List<Interaction> Interactions { get; set; } = new();
+            public List<Deal> Deals { get; set; } = new();
 
-            if (request.LastContactBefore.HasValue)
-                query = query.Where(c => c.LastContactDate < request.LastContactBefore.Value);
-
-            if (request.DealStage.HasValue)
-                query = query.Where(c => c.DealStage == request.DealStage.Value);
-
-            if (request.MinDealValue.HasValue)
-            {
-                // Use cached DealValue if available; otherwise calculate on fly
-                query = query.Where(c => GetCachedDealValue(c.Id) > request.MinDealValue.Value
-                    || CalculatePotentialDealValue(c) > request.MinDealValue.Value);
-            }
-
-            return query;
+            public ContactMetrics? Metrics { get; set; }
         }
 
-        private IQueryable<Contact> ApplySorting(IQueryable<Contact> query, ContactSearchRequest request)
+        public class Tag
         {
-            var sortExpression = GetSortExpression(request);
-            return request.SortDescending
-                ? query.OrderByDescending(sortExpression)
-                : query.OrderBy(sortExpression);
+            public int Id { get; set; }
+            public string Name { get; set; } = string.Empty;
+
+            public int ContactId { get; set; }
+            public Contact? Contact { get; set; }
         }
 
-        private Expression<Func<Contact, object>> GetSortExpression(ContactSearchRequest request)
+        public class Interaction
         {
-            return request.SortBy?.ToLower() switch
-            {
-                "fullname" => c => $"{c.FirstName} {c.LastName}",
-                "company" => c => c.Company,
-                "email" => c => c.Email,
-                _ => c => c.LastContactDate // Default sort
-            };
+            public int Id { get; set; }
+            public int ContactId { get; set; }
+            public InteractionType Type { get; set; }
+            public DateTime Date { get; set; }
+
+            public Contact? Contact { get; set; }
         }
 
-        // Cached expensive calculation
-        private decimal CalculatePotentialDealValue(Contact contact)
+        public class Deal
         {
-            var cacheKey = $"{CachePrefix}deal-value:{contact.Id}";
-            var cachedValue = _cache.GetString(cacheKey);
-            if (cachedValue != null && decimal.TryParse(cachedValue, out var value))
-                return value;
+            public int Id { get; set; }
+            public int ContactId { get; set; }
+            public decimal? EstimatedValue { get; set; }
 
-            decimal baseValue = contact.BasePotentialValue ?? 0;
-            baseValue *= contact.Interactions.Sum(i => GetInteractionMultiplier(i.Type));
-            baseValue *= GetStageMultiplier(contact.DealStage);
-            baseValue += contact.Deals.Sum(d => d.EstimatedValue ?? 0);
-
-            var daysSinceLastContact = (DateTime.Now - contact.LastContactDate).Days;
-            if (daysSinceLastContact > 30)
-                baseValue *= (decimal)Math.Pow(0.99, daysSinceLastContact - 30);
-
-            var result = Math.Round(baseValue, 2);
-            _cache.SetString(cacheKey, result.ToString(), new DistributedCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
-            });
-
-            return result;
+            public Contact? Contact { get; set; }
         }
 
-        private async Task CacheDealValues(List<ContactDto> dtos)
+        // Cached/denormalized metrics to avoid N+1 and expensive per-row calculations during search
+        public class ContactMetrics
         {
-            foreach (var dto in dtos)
+            public int ContactId { get; set; }
+            public Contact? Contact { get; set; }
+
+            public int InteractionCount { get; set; }
+            public decimal DealSum { get; set; }
+
+            // Precomputed, searchable value
+            public decimal PotentialDealValueCached { get; set; }
+
+            public DateTime CachedAsOfUtc { get; set; }
+        }
+
+        // DTOs
+        public class ContactDto
+        {
+            public int Id { get; set; }
+            public string FullName { get; set; } = string.Empty;
+            public string Email { get; set; } = string.Empty;
+            public string Company { get; set; } = string.Empty;
+            public string City { get; set; } = string.Empty;
+            public DateTime LastContact { get; set; }
+            public decimal DealValue { get; set; }
+            public List<string> Tags { get; set; } = new();
+            public int InteractionCount { get; set; }
+        }
+
+        // Request model
+        public class ContactSearchRequest
+        {
+            public string? City { get; set; }
+            public string? Tags { get; set; }
+            public DateTime? LastContactBefore { get; set; }
+            public DealStage? DealStage { get; set; }
+            public decimal? MinDealValue { get; set; }
+            public int? Page { get; set; }
+            public int? PageSize { get; set; }
+        }
+
+        // SQLite DbContext with seed + indexes
+        public class CrmDbContext : DbContext
+        {
+            private readonly string _databasePath;
+
+            public DbSet<Contact> Contacts => Set<Contact>();
+            public DbSet<Tag> Tags => Set<Tag>();
+            public DbSet<Interaction> Interactions => Set<Interaction>();
+            public DbSet<Deal> Deals => Set<Deal>();
+            public DbSet<ContactMetrics> ContactMetrics => Set<ContactMetrics>();
+
+            public CrmDbContext(string? databasePath = null)
             {
-                var cacheKey = $"{CachePrefix}deal-value:{dto.Id}";
-                await _cache.SetStringAsync(cacheKey, dto.DealValue.ToString(), new DistributedCacheEntryOptions
+                _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "crm_contacts.sqlite");
+
+                var directory = Path.GetDirectoryName(_databasePath);
+                if (!string.IsNullOrEmpty(directory))
                 {
-                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
-                });
+                    Directory.CreateDirectory(directory);
+                }
+            }
+
+            protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            {
+                if (!optionsBuilder.IsConfigured)
+                {
+                    optionsBuilder.UseSqlite($"Data Source={_databasePath}");
+                }
+            }
+
+            protected override void OnModelCreating(ModelBuilder modelBuilder)
+            {
+                modelBuilder.Entity<Contact>().HasKey(c => c.Id);
+
+                modelBuilder.Entity<Tag>().HasKey(t => t.Id);
+                modelBuilder.Entity<Tag>()
+                    .HasOne(t => t.Contact)
+                    .WithMany(c => c.Tags)
+                    .HasForeignKey(t => t.ContactId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                modelBuilder.Entity<Interaction>().HasKey(i => i.Id);
+                modelBuilder.Entity<Interaction>()
+                    .HasOne(i => i.Contact)
+                    .WithMany(c => c.Interactions)
+                    .HasForeignKey(i => i.ContactId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                modelBuilder.Entity<Deal>().HasKey(d => d.Id);
+                modelBuilder.Entity<Deal>()
+                    .HasOne(d => d.Contact)
+                    .WithMany(c => c.Deals)
+                    .HasForeignKey(d => d.ContactId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                modelBuilder.Entity<ContactMetrics>().HasKey(m => m.ContactId);
+                modelBuilder.Entity<ContactMetrics>()
+                    .HasOne(m => m.Contact)
+                    .WithOne(c => c.Metrics)
+                    .HasForeignKey<ContactMetrics>(m => m.ContactId)
+                    .OnDelete(DeleteBehavior.Cascade);
+
+                // Indexes aligned with search filters + sort
+                modelBuilder.Entity<Contact>()
+                    .HasIndex(c => new { c.City, c.LastContactDate });
+
+                modelBuilder.Entity<Contact>()
+                    .HasIndex(c => new { c.DealStage, c.LastContactDate });
+
+                modelBuilder.Entity<Contact>()
+                    .HasIndex(c => new { c.LastContactDate, c.LastName, c.FirstName, c.Id });
+
+                modelBuilder.Entity<Tag>()
+                    .HasIndex(t => new { t.ContactId, t.Name });
+
+                modelBuilder.Entity<ContactMetrics>()
+                    .HasIndex(m => m.PotentialDealValueCached);
+
+                modelBuilder.Entity<ContactMetrics>()
+                    .HasIndex(m => m.InteractionCount);
+
+                modelBuilder.Entity<ContactMetrics>()
+                    .HasIndex(m => m.DealSum);
+            }
+
+            public async Task EnsureCreatedAndSeededAsync()
+            {
+                await Database.EnsureCreatedAsync().ConfigureAwait(false);
+
+                if (!await Contacts.AsNoTracking().AnyAsync().ConfigureAwait(false))
+                {
+                    await GenerateMockDataAsync().ConfigureAwait(false);
+                }
+            }
+
+            private async Task GenerateMockDataAsync()
+            {
+                const int totalContacts = 50000;
+
+                var random = new Random(42);
+                var now = DateTime.UtcNow;
+
+                var cities = new[] { "New York", "London", "Tokyo", "Paris", "Berlin", "Sydney", "Toronto", "Singapore" };
+                var tagNames = new[] { "VIP", "Regular", "New", "Active", "Inactive", "Premium", "Enterprise", "SMB" };
+
+                var contacts = new List<Contact>(totalContacts);
+
+                for (int i = 1; i <= totalContacts; i++)
+                {
+                    var contact = new Contact
+                    {
+                        Id = i,
+                        FirstName = $"First{i}",
+                        LastName = $"Last{i}",
+                        Email = $"contact{i}@example.com",
+                        Company = $"Company {i % 100}",
+                        City = cities[random.Next(cities.Length)],
+                        LastContactDate = DateTime.SpecifyKind(DateTime.Now.AddDays(-random.Next(1, 730)), DateTimeKind.Local),
+                        DealStage = (DealStage)random.Next(0, 6),
+                        BasePotentialValue = random.Next(1000, 100000)
+                    };
+
+                    var tagCount = random.Next(1, 4);
+                    for (int j = 0; j < tagCount; j++)
+                    {
+                        contact.Tags.Add(new Tag
+                        {
+                            Name = tagNames[random.Next(tagNames.Length)]
+                        });
+                    }
+
+                    var interactionCount = random.Next(1, 6);
+                    for (int j = 0; j < interactionCount; j++)
+                    {
+                        contact.Interactions.Add(new Interaction
+                        {
+                            Type = (InteractionType)random.Next(0, 5),
+                            Date = DateTime.Now.AddDays(-random.Next(1, 365))
+                        });
+                    }
+
+                    var dealCount = random.Next(0, 4);
+                    for (int j = 0; j < dealCount; j++)
+                    {
+                        contact.Deals.Add(new Deal
+                        {
+                            EstimatedValue = random.Next(5000, 500000)
+                        });
+                    }
+
+                    // Compute cached metrics from in-memory nav collections (no N+1)
+                    var metrics = new ContactMetrics
+                    {
+                        ContactId = contact.Id,
+                        InteractionCount = contact.Interactions.Count,
+                        DealSum = contact.Deals.Sum(d => d.EstimatedValue ?? 0m),
+                        PotentialDealValueCached = CalculatePotentialDealValueFromInMemory(contact, now),
+                        CachedAsOfUtc = now
+                    };
+
+                    contact.Metrics = metrics;
+                    contacts.Add(contact);
+                }
+
+                await Contacts.AddRangeAsync(contacts).ConfigureAwait(false);
+                await SaveChangesAsync().ConfigureAwait(false);
+            }
+
+            private static decimal CalculatePotentialDealValueFromInMemory(Contact contact, DateTime nowUtc)
+            {
+                decimal baseValue = contact.BasePotentialValue ?? 0m;
+
+                foreach (var interaction in contact.Interactions)
+                {
+                    baseValue *= GetInteractionMultiplier(interaction.Type);
+                }
+
+                baseValue *= GetStageMultiplier(contact.DealStage);
+
+                baseValue += contact.Deals.Sum(d => d.EstimatedValue ?? 0m);
+
+                var lastContactUtc = contact.LastContactDate.Kind == DateTimeKind.Utc
+                    ? contact.LastContactDate
+                    : contact.LastContactDate.ToUniversalTime();
+
+                var daysSinceLastContact = (nowUtc - lastContactUtc).Days;
+                if (daysSinceLastContact > 30)
+                {
+                    // Keep logic identical to legacy (decay). This is computed at seed/update time, not during search.
+                    baseValue *= (decimal)Math.Pow(0.99, daysSinceLastContact - 30);
+                }
+
+                return Math.Round(baseValue, 2);
+            }
+
+            private static decimal GetInteractionMultiplier(InteractionType type)
+            {
+                return type switch
+                {
+                    InteractionType.Email => 1.01m,
+                    InteractionType.Call => 1.05m,
+                    InteractionType.Meeting => 1.15m,
+                    InteractionType.Demo => 1.25m,
+                    _ => 1.0m
+                };
+            }
+
+            private static decimal GetStageMultiplier(DealStage? stage)
+            {
+                return stage switch
+                {
+                    DealStage.Prospect => 0.3m,
+                    DealStage.Qualified => 0.6m,
+                    DealStage.Proposal => 0.8m,
+                    DealStage.Negotiation => 0.9m,
+                    DealStage.ClosedWon => 1.0m,
+                    DealStage.ClosedLost => 0.0m,
+                    _ => 0.1m
+                };
             }
         }
 
-        private decimal GetCachedDealValue(int contactId)
+        // Optimized search service: DB filtering + DB sorting + DB pagination + no N+1
+        public class ContactSearcher
         {
-            var cacheKey = $"{CachePrefix}deal-value:{contactId}";
-            return decimal.TryParse(_cache.GetString(cacheKey), out var value) ? value : 0;
-        }
+            private readonly CrmDbContext _context;
 
-        private string GetCacheKey(ContactSearchRequest request)
-        {
-            return $"{CachePrefix}{JsonConvert.SerializeObject(request)}";
-        }
-
-        private string? GetNextPageToken(ContactSearchRequest request, int totalCount)
-        {
-            var nextPage = request.Page + 1;
-            if (nextPage * request.PageSize > totalCount)
-                return null;
-
-            // For keyset pagination, return last sorted value instead of page number
-            return JsonConvert.SerializeObject(new { Page = nextPage, request.SortBy, request.SortDescending });
-        }
-
-        // Helper methods (unchanged logic, cached)
-        private decimal GetInteractionMultiplier(InteractionType type) => type switch
-        {
-            InteractionType.Email => 1.01m,
-            InteractionType.Call => 1.05m,
-            InteractionType.Meeting => 1.15m,
-            InteractionType.Demo => 1.25m,
-            _ => 1.0m
-        };
-
-        private decimal GetStageMultiplier(DealStage? stage) => stage switch
-        {
-            DealStage.Prospect => 0.3m,
-            DealStage.Qualified => 0.6m,
-            DealStage.Proposal => 0.8m,
-            DealStage.Negotiation => 0.9m,
-            DealStage.ClosedWon => 1.0m,
-            DealStage.ClosedLost => 0.0m,
-            _ => 0.1m
-        };
-    }
-
-    // Example Usage (DI Setup)
-    public static class DependencyInjection
-    {
-        public static IServiceCollection AddCrmServices(this IServiceCollection services, string connectionString)
-        {
-            services.AddDbContext<CrmDbContext>(options =>
-                options.UseNpgsql(connectionString) // Use UseSqlServer for SQL Server
-                    .EnableSensitiveDataLogging(false)
-                    .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)); // Disable tracking for read-only queries
-
-            services.AddDistributedRedisCache(options =>
+            public ContactSearcher(CrmDbContext context)
             {
-                options.Configuration = "localhost:6379"; // Use production Redis cluster
-                options.InstanceName = "crm-";
-            });
+                _context = context;
+            }
 
-            services.AddScoped<ContactSearcher>();
-            return services;
+            public async Task<SearchResult> SearchContacts(ContactSearchRequest request)
+            {
+                var sw = Stopwatch.StartNew();
+
+                // Ensure DB is created and seeded during the run (fits your test expectations).
+                await _context.EnsureCreatedAndSeededAsync().ConfigureAwait(false);
+
+                var page = request.Page.GetValueOrDefault(1);
+                if (page < 1) page = 1;
+
+                var pageSize = request.PageSize.GetValueOrDefault(50);
+                if (pageSize < 1) pageSize = 1;
+                if (pageSize > 200) pageSize = 200;
+
+                var tagSet = ParseTags(request.Tags);
+
+                // Base filtered query (no materialization here)
+                var baseQuery =
+                    from c in _context.Contacts.AsNoTracking()
+                    join m in _context.ContactMetrics.AsNoTracking() on c.Id equals m.ContactId
+                    select new
+                    {
+                        Contact = c,
+                        Metrics = m
+                    };
+
+                if (!string.IsNullOrWhiteSpace(request.City))
+                {
+                    var city = request.City.Trim();
+                    baseQuery = baseQuery.Where(x => x.Contact.City == city);
+                }
+
+                if (request.LastContactBefore.HasValue)
+                {
+                    var cutoff = request.LastContactBefore.Value;
+                    baseQuery = baseQuery.Where(x => x.Contact.LastContactDate < cutoff);
+                }
+
+                if (request.DealStage.HasValue)
+                {
+                    var stage = request.DealStage.Value;
+                    baseQuery = baseQuery.Where(x => x.Contact.DealStage == stage);
+                }
+
+                if (request.MinDealValue.HasValue)
+                {
+                    var min = request.MinDealValue.Value;
+                    baseQuery = baseQuery.Where(x => x.Metrics.PotentialDealValueCached > min);
+                }
+
+                if (tagSet.Count > 0)
+                {
+                    baseQuery = baseQuery.Where(x =>
+                        _context.Tags.Any(t => t.ContactId == x.Contact.Id && tagSet.Contains(t.Name))
+                    );
+                }
+
+                // Total count (separate query, still fast for 5k)
+                var totalCount = await baseQuery.CountAsync().ConfigureAwait(false);
+
+                // Ordering + DB pagination
+                var orderedQuery = baseQuery
+                    .OrderByDescending(x => x.Contact.LastContactDate)
+                    .ThenBy(x => x.Contact.LastName)
+                    .ThenBy(x => x.Contact.FirstName)
+                    .ThenBy(x => x.Contact.Id);
+
+                var startIndex = (page - 1) * pageSize;
+
+                var pageRows = await orderedQuery
+                    .Skip(startIndex)
+                    .Take(pageSize)
+                    .Select(x => new PageRow
+                    {
+                        Id = x.Contact.Id,
+                        FirstName = x.Contact.FirstName,
+                        LastName = x.Contact.LastName,
+                        Email = x.Contact.Email,
+                        Company = x.Contact.Company,
+                        City = x.Contact.City,
+                        LastContactDate = x.Contact.LastContactDate,
+                        DealValue = x.Metrics.PotentialDealValueCached,
+                        InteractionCount = x.Metrics.InteractionCount
+                    })
+                    .ToListAsync()
+                    .ConfigureAwait(false);
+
+                // Batch load tags for only the contacts in the page (no Include, no N+1)
+                var ids = pageRows.Select(r => r.Id).ToArray();
+
+                var tagPairs = await _context.Tags.AsNoTracking()
+                    .Where(t => ids.Contains(t.ContactId))
+                    .Select(t => new { t.ContactId, t.Name })
+                    .ToListAsync()
+                    .ConfigureAwait(false);
+
+                var tagsByContact = tagPairs
+                    .GroupBy(x => x.ContactId)
+                    .ToDictionary(g => g.Key, g => g.Select(v => v.Name).Distinct().ToList());
+
+                var data = pageRows.Select(r => new ContactDto
+                {
+                    Id = r.Id,
+                    FullName = r.FirstName + " " + r.LastName,
+                    Email = r.Email,
+                    Company = r.Company,
+                    City = r.City,
+                    LastContact = r.LastContactDate,
+                    DealValue = r.DealValue,
+                    InteractionCount = r.InteractionCount,
+                    Tags = tagsByContact.TryGetValue(r.Id, out var list) ? list : new List<string>()
+                }).ToList();
+
+                sw.Stop();
+
+                return new SearchResult
+                {
+                    TotalCount = totalCount,
+                    Page = page,
+                    PageSize = pageSize,
+                    Data = data,
+                    ElapsedMilliseconds = sw.Elapsed.TotalMilliseconds
+                };
+            }
+
+            private static HashSet<string> ParseTags(string? tags)
+            {
+                if (string.IsNullOrWhiteSpace(tags))
+                {
+                    return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                }
+
+                return tags
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+
+            private sealed class PageRow
+            {
+                public int Id { get; set; }
+                public string FirstName { get; set; } = string.Empty;
+                public string LastName { get; set; } = string.Empty;
+                public string Email { get; set; } = string.Empty;
+                public string Company { get; set; } = string.Empty;
+                public string City { get; set; } = string.Empty;
+                public DateTime LastContactDate { get; set; }
+                public decimal DealValue { get; set; }
+                public int InteractionCount { get; set; }
+            }
+        }
+
+        public class SearchResult
+        {
+            public int TotalCount { get; set; }
+            public int Page { get; set; }
+            public int PageSize { get; set; }
+            public List<ContactDto> Data { get; set; } = new();
+            public double ElapsedMilliseconds { get; set; }
         }
     }
 }

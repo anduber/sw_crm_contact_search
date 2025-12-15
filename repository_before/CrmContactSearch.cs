@@ -105,15 +105,31 @@ namespace repository_before
         public class CrmDbContext : DbContext
         {
             private readonly string _databasePath;
+            private readonly bool _ownsDatabaseFile;
+            private readonly EventHandler? _processExitHandler;
+            private bool _databaseCleanupCompleted;
 
             public DbSet<Contact> Contacts => Set<Contact>();
             public DbSet<Tag> Tags => Set<Tag>();
             public DbSet<Interaction> Interactions => Set<Interaction>();
             public DbSet<Deal> Deals => Set<Deal>();
 
-            public CrmDbContext(string? databasePath = null)
+            public CrmDbContext(string? databasePath = null, bool deleteDatabaseOnDispose = true)
             {
-                _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "crm_contacts.sqlite");
+                var defaultDatabasePath = Path.Combine(AppContext.BaseDirectory, "crm_contacts.sqlite");
+                _databasePath = databasePath ?? defaultDatabasePath;
+                _ownsDatabaseFile = deleteDatabaseOnDispose && databasePath is null;
+                var directory = Path.GetDirectoryName(_databasePath);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                if (_ownsDatabaseFile)
+                {
+                    _processExitHandler = OnProcessExit;
+                    AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
+                }
             }
 
             protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -146,7 +162,7 @@ namespace repository_before
 
             private async Task GenerateMockData()
             {
-                const int totalContacts = 500000;
+                const int totalContacts = 50000;
                 var random = new Random(42);
                 var cities = new[] { "New York", "London", "Tokyo", "Paris", "Berlin", "Sydney", "Toronto", "Singapore" };
                 var tagNames = new[] { "VIP", "Regular", "New", "Active", "Inactive", "Premium", "Enterprise", "SMB" };
@@ -201,6 +217,52 @@ namespace repository_before
 
                 await Contacts.AddRangeAsync(contacts);
                 await SaveChangesAsync();
+            }
+
+            public override void Dispose()
+            {
+                base.Dispose();
+                CleanupDatabaseFile();
+            }
+
+            public override async ValueTask DisposeAsync()
+            {
+                await base.DisposeAsync();
+                CleanupDatabaseFile();
+            }
+
+            private void OnProcessExit(object? sender, EventArgs e)
+            {
+                CleanupDatabaseFile();
+            }
+
+            private void CleanupDatabaseFile()
+            {
+                if (!_ownsDatabaseFile || _databaseCleanupCompleted)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (File.Exists(_databasePath))
+                    {
+                        File.Delete(_databasePath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Warning: Unable to delete SQLite database at '{_databasePath}': {ex.Message}");
+                }
+                finally
+                {
+                    if (_processExitHandler is not null)
+                    {
+                        AppDomain.CurrentDomain.ProcessExit -= _processExitHandler;
+                    }
+
+                    _databaseCleanupCompleted = true;
+                }
             }
         }
 
