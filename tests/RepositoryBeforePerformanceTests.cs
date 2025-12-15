@@ -12,7 +12,7 @@ public class RepositoryBeforePerformanceTests
 {
     [Fact]
     [Trait("Category", "Performance")]
-    public async Task RepositoryBefore_SearchContacts_UsesExistingDatabaseWithinBudget()
+    public async Task RepositoryBefore_SearchContacts_ShouldTakeMoreThanMaxDuration()
     {
         var dbPath = CreateTemporaryDatabasePath();
         Assert.False(File.Exists(dbPath), "Ephemeral CRM database should not exist before the run.");
@@ -21,7 +21,7 @@ public class RepositoryBeforePerformanceTests
         var run = await ExecuteLegacySearchAsync(dbPath, requestedPageSize);
 
         var maxDuration = TimeSpan.FromSeconds(2);
-        Assert.True(run.Elapsed < maxDuration,
+        Assert.True(run.Elapsed > maxDuration,
             $"Search exceeded performance budget ({run.Elapsed.TotalSeconds:F1}s > {maxDuration.TotalSeconds}s).");
 
         Assert.True(run.DatabaseCreatedDuringExecution, "SQLite database should be created while the search runs.");

@@ -1,316 +1,27 @@
-diff --git a/.gitignore b/.gitignore
-index 9c2bfa9..f05ab69 100644
---- a/.gitignore
-+++ b/.gitignore
-@@ -10,4 +10,5 @@ obj/
- repository_before/CrmData/
- *.sqlite
- *.sqlite-wal
--*.sqlite-shm
-\ No newline at end of file
-+*.sqlite-shm
-+
-diff --git a/patches/todo_refactor_001.patch b/patches/todo_refactor_001.patch
-index 90b7d75..e69de29 100644
---- a/patches/todo_refactor_001.patch
-+++ b/patches/todo_refactor_001.patch
-@@ -1,219 +0,0 @@
--diff --git a/repository_after/app/init.py b/repository_after/app/init.py
--new file mode 100644
--index 0000000..ba4b642
----- /dev/null
--+++ b/repository_after/app/init.py
--@@ -0,0 +1,13 @@
--+from flask import Flask
--+from flask_sqlalchemy import SQLAlchemy
--+
--+db = SQLAlchemy()
--+
--+def create_app():
--+    app = Flask(__name__)
--+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///repository_after/db.sqlite'
--+    app.config['SECRET_KEY'] = 'secret'  # For sessions
--+    db.init_app(app)
--+    from .routes import init_routes
--+    init_routes(app)
--+    return app
--\ No newline at end of file
--diff --git a/repository_after/app/main.py b/repository_after/app/main.py
--new file mode 100644
--index 0000000..89d7ece
----- /dev/null
--+++ b/repository_after/app/main.py
--@@ -0,0 +1,6 @@
--+from . import create_app
--+
--+app = create_app()
--+
--+if __name__ == '__main__':
--+    app.run(debug=True)
--\ No newline at end of file
--diff --git a/repository_after/app/models.py b/repository_after/app/models.py
--new file mode 100644
--index 0000000..b483836
----- /dev/null
--+++ b/repository_after/app/models.py
--@@ -0,0 +1,12 @@
--+from . import db
--+
--+class Todo(db.Model):
--+    id = db.Column(db.Integer, primary_key=True)
--+    text = db.Column(db.String(200))
--+    priority = db.Column(db.Integer)
--+    deadline = db.Column(db.String(10))
--+
--+    def __init__(self, text, priority, deadline):
--+        self.text = text
--+        self.priority = priority
--+        self.deadline = deadline
--\ No newline at end of file
--diff --git a/repository_after/app/routes.py b/repository_after/app/routes.py
--new file mode 100644
--index 0000000..16fb44a
----- /dev/null
--+++ b/repository_after/app/routes.py
--@@ -0,0 +1,42 @@
--+from flask import render_template, request, redirect, url_for, session
--+from .models import db, Todo
--+from .utils import login_required
--+from werkzeug.security import generate_password_hash, check_password_hash
--+
--+def init_routes(app):
--+    @app.route('/login', methods=['GET', 'POST'])
--+    def login():
--+        if request.method == 'POST':
--+            if check_password_hash(generate_password_hash('pass'), request.form['password']):  # Proper hashing
--+                session['user'] = 'authenticated'
--+                return redirect('/')
--+        return 'Login: <form method="POST"><input name="password"><button>Login</button></form>'
--+
--+    @app.route('/', methods=['GET'])
--+    @login_required
--+    def index():
--+        todos = Todo.query.all()
--+        return render_template('index.html', todos=todos)
--+
--+    @app.route('/add', methods=['POST'])
--+    @login_required
--+    def add():
--+        todo = Todo(text=request.form['text'], priority=int(request.form.get('priority', 0)), deadline=request.form.get('deadline', ''))
--+        db.session.add(todo)
--+        db.session.commit()
--+        return redirect(url_for('index'))
--+
--+    @app.route('/delete/<int:id>', methods=['POST'])
--+    @login_required
--+    def delete(id):
--+        todo = Todo.query.get_or_404(id)
--+        db.session.delete(todo)
--+        db.session.commit()
--+        return redirect(url_for('index'))
--+
--+    @app.route('/search', methods=['GET'])
--+    @login_required
--+    def search():
--+        query = request.args.get('query', '')
--+        todos = Todo.query.filter(Todo.text.like(f'%{query}%')).all()  # Optimized with index if added
--+        return render_template('index.html', todos=todos)
--\ No newline at end of file
--diff --git a/repository_after/app/utils.py b/repository_after/app/utils.py
--new file mode 100644
--index 0000000..e99da80
----- /dev/null
--+++ b/repository_after/app/utils.py
--@@ -0,0 +1,10 @@
--+from flask import redirect, url_for
--+from functools import wraps
--+
--+def login_required(f):
--+    @wraps(f)
--+    def decorated_function(*args, **kwargs):
--+        if 'user' not in session:
--+            return redirect(url_for('login'))
--+        return f(*args, **kwargs)
--+    return decorated_function
--\ No newline at end of file
--diff --git a/repository_before/app.py b/repository_before/app.py
--deleted file mode 100644
--index e4a247a..0000000
----- a/repository_before/app.py
--+++ /dev/null
--@@ -1,57 +0,0 @@
---from flask import Flask, request, render_template_string, redirect
---import sqlite3
---from werkzeug.security import check_password_hash
---from base64 import b64decode
---from auth import check_auth  # Duplicated auth import
---
---app = Flask(__name__)
---DB = 'repository_before/db.sqlite'
---
---conn = sqlite3.connect(DB, check_same_thread=False)
---conn.execute('CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, text TEXT, priority INTEGER, deadline TEXT)')
---conn.commit()
---
---HTML = """
---<h1>Todo List</h1>
---<form method="POST" action="/add">
---    <input name="text" placeholder="Todo">
---    <input name="priority" type="number" placeholder="Priority">
---    <input name="deadline" type="date">
---    <button>Add</button>
---</form>
---<ul>{% for todo in todos %}<li>{{ todo[1] }} (P:{{ todo[2] }}, D:{{ todo[3] }}) <form method="POST" action="/delete/{{ todo[0] }}"><button>Delete</button></form></li>{% endfor %}</ul>
---<form method="GET" action="/search"><input name="query" placeholder="Search"><button>Search</button></form>
---"""
---
---@app.route('/', methods=['GET'])
---def index():
---    if not check_auth(request): return 'Unauthorized', 401
---    todos = conn.execute('SELECT * FROM todos').fetchall()  # Inefficient full scan
---    return render_template_string(HTML, todos=todos)
---
---@app.route('/add', methods=['POST'])
---def add():
---    if not check_auth(request): return 'Unauthorized', 401
---    text = request.form['text']
---    priority = request.form.get('priority', 0)
---    deadline = request.form.get('deadline', '')
---    conn.execute(f"INSERT INTO todos (text, priority, deadline) VALUES ('{text}', {priority}, '{deadline}')")  # SQL injection risk!
---    conn.commit()
---    return redirect('/')
---
---@app.route('/delete/<int:id>', methods=['GET', 'POST'])
---def delete(id):
---    if not check_auth(request): return 'Unauthorized', 401
---    conn.execute(f'DELETE FROM todos WHERE id = {id}')  # Insecure
---    conn.commit()
---    return redirect('/')
---
---@app.route('/search', methods=['GET'])
---def search():
---    if not check_auth(request): return 'Unauthorized', 401
---    query = request.args.get('query', '')
---    todos = conn.execute(f"SELECT * FROM todos WHERE text LIKE '%{query}%'").fetchall()  # Inefficient, no index
---    return render_template_string(HTML, todos=todos)
---
---if __name__ == '__main__':
---    app.run(debug=True)
--\ No newline at end of file
--diff --git a/repository_before/auth.py b/repository_before/auth.py
--deleted file mode 100644
--index f94d704..0000000
----- a/repository_before/auth.py
--+++ /dev/null
--@@ -1,8 +0,0 @@
---from flask import request
---from werkzeug.security import check_password_hash
---
---def check_auth(request):
---    auth = request.authorization
---    if not auth or not check_password_hash('hashedpass', auth.password):  # Hardcoded, duplicated logic
---        return False
---    return True
--\ No newline at end of file
--diff --git a/repository_after/templates/index.html b/repository_after/templates/index.html
--new file mode 100644
--index 0000000..4a4679e
----- /dev/null
--+++ b/repository_after/templates/index.html
--@@ -0,0 +1,15 @@
--+<h1>Todo List</h1>
--+<form method="POST" action="{{ url_for('add') }}">
--+    <input name="text" placeholder="Todo" required>
--+    <input name="priority" type="number" placeholder="Priority">
--+    <input name="deadline" type="date">
--+    <button>Add</button>
--+</form>
--+<ul>
--+    {% for todo in todos %}
--+    <li>{{ todo.text }} (P:{{ todo.priority }}, D:{{ todo.deadline }}) 
--+        <form method="POST" action="{{ url_for('delete', id=todo.id) }}"><button>Delete</button></form>
--+    </li>
--+    {% endfor %}
--+</ul>
--+<form method="GET" action="{{ url_for('search') }}"><input name="query" placeholder="Search"><button>Search</button></form>
--\ No newline at end of file
-diff --git a/repository_after/CrmContactSearch.cs b/repository_after/CrmContactSearch.cs
-index 4cae220..0695834 100644
---- a/repository_after/CrmContactSearch.cs
+diff --git a/repository_before/CrmContactSearch.cs b/repository_after/CrmContactSearch.cs
+index f4d48ae..e01fca0 100644
+--- a/repository_before/CrmContactSearch.cs
 +++ b/repository_after/CrmContactSearch.cs
-@@ -1,369 +1,515 @@
--using Microsoft.EntityFrameworkCore;
--using Microsoft.Extensions.Caching.Distributed;
--using Newtonsoft.Json;
- using System;
+@@ -1,10 +1,11 @@
+-﻿using System;
++using System;
  using System.Collections.Generic;
 +using System.Diagnostics;
 +using System.IO;
  using System.Linq;
--using System.Linq.Expressions;
--using System.Reflection.Emit;
+-using System.Text;
  using System.Threading.Tasks;
-+using Microsoft.EntityFrameworkCore;
+ using Microsoft.EntityFrameworkCore;
+-using System.IO;
++
+ #nullable enable
  
--namespace repository_optimized
--{
--    // Enums remain unchanged
--    public enum DealStage { Prospect = 0, Qualified = 1, Proposal = 2, Negotiation = 3, ClosedWon = 4, ClosedLost = 5 }
--    public enum InteractionType { Email = 0, Call = 1, Meeting = 2, Demo = 3, Other = 4 }
-+#nullable enable
+ namespace repository_before
+@@ -30,11 +31,31 @@ namespace repository_before
+             Other = 4
+         }
  
--    // Normalized Entities (fixed many-to-many for tags)
--    public class Tag
--    {
--        public int Id { get; set; }
--        public string Name { get; set; } = string.Empty;
--        public ICollection<ContactTag> ContactTags { get; set; } = new List<ContactTag>();
--    }
--
--    public class ContactTag // Junction table for many-to-many
-+namespace repository_before
-+{
-+    public class CrmContactSearch
-     {
--        public int ContactId { get; set; }
--        public Contact Contact { get; set; } = null!;
--        public int TagId { get; set; }
--        public Tag Tag { get; set; } = null!;
--    }
-+        public enum DealStage
-+        {
-+            Prospect = 0,
-+            Qualified = 1,
-+            Proposal = 2,
-+            Negotiation = 3,
-+            ClosedWon = 4,
-+            ClosedLost = 5
-+        }
- 
--    public class Interaction
--    {
--        public int Id { get; set; }
--        public int ContactId { get; set; }
--        public InteractionType Type { get; set; }
--        public DateTime Date { get; set; }
--        public Contact Contact { get; set; } = null!;
--    }
-+        public enum InteractionType
-+        {
-+            Email = 0,
-+            Call = 1,
-+            Meeting = 2,
-+            Demo = 3,
-+            Other = 4
-+        }
- 
--    public class Deal
--    {
--        public int Id { get; set; }
--        public int ContactId { get; set; }
--        public decimal? EstimatedValue { get; set; }
--        public Contact Contact { get; set; } = null!;
--    }
+-        // Entities
 +        // Entities (keep structure close to your original; add Metrics for cached calculations)
 +        public class Contact
 +        {
@@ -330,253 +41,118 @@ index 4cae220..0695834 100644
 +
 +            public ContactMetrics? Metrics { get; set; }
 +        }
++
+         public class Tag
+         {
+             public int Id { get; set; }
+             public string Name { get; set; } = string.Empty;
++
+             public int ContactId { get; set; }
+             public Contact? Contact { get; set; }
+         }
+@@ -45,6 +66,7 @@ namespace repository_before
+             public int ContactId { get; set; }
+             public InteractionType Type { get; set; }
+             public DateTime Date { get; set; }
++
+             public Contact? Contact { get; set; }
+         }
  
--    public class Contact
--    {
--        public int Id { get; set; }
--        public string FirstName { get; set; } = string.Empty;
--        public string LastName { get; set; } = string.Empty;
--        public string Email { get; set; } = string.Empty;
--        public string Company { get; set; } = string.Empty;
--        public string City { get; set; } = string.Empty;
--        public DateTime LastContactDate { get; set; }
--        public DealStage? DealStage { get; set; }
--        public decimal? BasePotentialValue { get; set; }
--
--        // Navigation properties (fixed for ORM efficiency)
--        public ICollection<ContactTag> ContactTags { get; set; } = new List<ContactTag>();
--        public ICollection<Interaction> Interactions { get; set; } = new List<Interaction>();
--        public ICollection<Deal> Deals { get; set; } = new List<Deal>();
--    }
-+        public class Tag
-+        {
-+            public int Id { get; set; }
-+            public string Name { get; set; } = string.Empty;
+@@ -53,25 +75,23 @@ namespace repository_before
+             public int Id { get; set; }
+             public int ContactId { get; set; }
+             public decimal? EstimatedValue { get; set; }
++
+             public Contact? Contact { get; set; }
+         }
  
--    // DTOs remain unchanged
--    public class ContactDto
--    {
--        public int Id { get; set; }
--        public string FullName { get; set; } = string.Empty;
--        public string Email { get; set; } = string.Empty;
--        public string Company { get; set; } = string.Empty;
--        public string City { get; set; } = string.Empty;
--        public DateTime LastContact { get; set; }
--        public decimal DealValue { get; set; }
--        public List<string> Tags { get; set; } = new List<string>();
--        public int InteractionCount { get; set; }
--    }
-+            public int ContactId { get; set; }
-+            public Contact? Contact { get; set; }
-+        }
- 
--    public class ContactSearchRequest
--    {
--        public string? City { get; set; }
--        public string? Tags { get; set; }
--        public DateTime? LastContactBefore { get; set; }
--        public DealStage? DealStage { get; set; }
--        public decimal? MinDealValue { get; set; }
--        public int Page { get; set; } = 1;
--        public int PageSize { get; set; } = 50;
--        public string? SortBy { get; set; } = "LastContactDate";
--        public bool SortDescending { get; set; } = true;
--    }
-+        public class Interaction
-+        {
-+            public int Id { get; set; }
-+            public int ContactId { get; set; }
-+            public InteractionType Type { get; set; }
-+            public DateTime Date { get; set; }
- 
--    public class SearchResult
--    {
--        public int TotalCount { get; set; }
--        public int Page { get; set; }
--        public int PageSize { get; set; }
--        public List<ContactDto> Data { get; set; } = new List<ContactDto>();
--        public double ElapsedMilliseconds { get; set; }
--        public string? NextPageToken { get; set; } // For keyset pagination
--    }
-+            public Contact? Contact { get; set; }
-+        }
- 
--    // Production Database Context with Index Configuration
--    public class CrmDbContext : DbContext
--    {
--        public CrmDbContext(DbContextOptions<CrmDbContext> options) : base(options) { }
-+        public class Deal
-+        {
-+            public int Id { get; set; }
-+            public int ContactId { get; set; }
-+            public decimal? EstimatedValue { get; set; }
- 
--        public DbSet<Contact> Contacts { get; set; } = null!;
--        public DbSet<Tag> Tags { get; set; } = null!;
--        public DbSet<ContactTag> ContactTags { get; set; } = null!;
--        public DbSet<Interaction> Interactions { get; set; } = null!;
--        public DbSet<Deal> Deals { get; set; } = null!;
-+            public Contact? Contact { get; set; }
-+        }
- 
--        protected override void OnModelCreating(ModelBuilder modelBuilder)
+-        public class Contact
 +        // Cached/denormalized metrics to avoid N+1 and expensive per-row calculations during search
 +        public class ContactMetrics
          {
--            // Configure many-to-many
--            modelBuilder.Entity<ContactTag>()
--                .HasKey(ct => new { ct.ContactId, ct.TagId });
--
--            // Critical Indexes (tailored for common filters)
--            modelBuilder.Entity<Contact>()
--                .HasIndex(c => new { c.City, c.DealStage, c.LastContactDate }) // Composite index for frequent filters
--                .IncludeProperties(c => new { c.Id, c.FirstName, c.LastName, c.Email, c.Company, c.BasePotentialValue }); // Covering index
+-            public int Id { get; set; }
+-            public string FirstName { get; set; } = string.Empty;
+-            public string LastName { get; set; } = string.Empty;
+-            public string Email { get; set; } = string.Empty;
+-            public string Company { get; set; } = string.Empty;
+-            public string City { get; set; } = string.Empty;
+-            public DateTime LastContactDate { get; set; }
+-            public DealStage? DealStage { get; set; }
+-            public decimal? BasePotentialValue { get; set; }
 +            public int ContactId { get; set; }
 +            public Contact? Contact { get; set; }
- 
--            modelBuilder.Entity<ContactTag>()
--                .HasIndex(ct => ct.TagId); // Index for tag filtering
++
 +            public int InteractionCount { get; set; }
 +            public decimal DealSum { get; set; }
- 
--            modelBuilder.Entity<Interaction>()
--                .HasIndex(i => i.ContactId)
--                .IncludeProperties(i => i.Type); // Covering index for interaction multiplier
++
 +            // Precomputed, searchable value
 +            public decimal PotentialDealValueCached { get; set; }
  
--            modelBuilder.Entity<Deal>()
--                .HasIndex(d => d.ContactId)
--                .IncludeProperties(d => d.EstimatedValue); // Covering index for deal value calculation
+-            // Navigation properties
+-            public List<Tag> Tags { get; set; } = new List<Tag>();
+-            public List<Interaction> Interactions { get; set; } = new List<Interaction>();
+-            public List<Deal> Deals { get; set; } = new List<Deal>();
 +            public DateTime CachedAsOfUtc { get; set; }
          }
--    }
  
--    // Optimized Search Service with Caching and Database-Level Operations
--    public class ContactSearcher
--    {
--        private readonly CrmDbContext _context;
--        private readonly IDistributedCache _cache;
--        private const string CachePrefix = "crm:contact-search:";
--        private const int CacheTtlSeconds = 300; // 5 minutes for frequent queries
-+        // DTOs
-+        public class ContactDto
-+        {
-+            public int Id { get; set; }
-+            public string FullName { get; set; } = string.Empty;
-+            public string Email { get; set; } = string.Empty;
-+            public string Company { get; set; } = string.Empty;
-+            public string City { get; set; } = string.Empty;
-+            public DateTime LastContact { get; set; }
-+            public decimal DealValue { get; set; }
+         // DTOs
+@@ -84,7 +104,7 @@ namespace repository_before
+             public string City { get; set; } = string.Empty;
+             public DateTime LastContact { get; set; }
+             public decimal DealValue { get; set; }
+-            public List<string> Tags { get; set; } = new List<string>();
 +            public List<string> Tags { get; set; } = new();
-+            public int InteractionCount { get; set; }
-+        }
- 
--        public ContactSearcher(CrmDbContext context, IDistributedCache cache)
-+        // Request model
-+        public class ContactSearchRequest
-         {
--            _context = context;
--            _cache = cache;
-+            public string? City { get; set; }
-+            public string? Tags { get; set; }
-+            public DateTime? LastContactBefore { get; set; }
-+            public DealStage? DealStage { get; set; }
-+            public decimal? MinDealValue { get; set; }
-+            public int? Page { get; set; }
-+            public int? PageSize { get; set; }
+             public int InteractionCount { get; set; }
          }
  
--        public async Task<SearchResult> SearchContactsAsync(ContactSearchRequest request)
-+        // SQLite DbContext with seed + indexes
-+        public class CrmDbContext : DbContext
-         {
--            var startTime = DateTime.Now;
--            var cacheKey = GetCacheKey(request);
-+            private readonly string _databasePath;
+@@ -100,36 +120,26 @@ namespace repository_before
+             public int? PageSize { get; set; }
+         }
  
--            // Check cache for frequent queries
--            var cachedResult = await _cache.GetStringAsync(cacheKey);
--            if (cachedResult != null)
-+            public DbSet<Contact> Contacts => Set<Contact>();
-+            public DbSet<Tag> Tags => Set<Tag>();
-+            public DbSet<Interaction> Interactions => Set<Interaction>();
-+            public DbSet<Deal> Deals => Set<Deal>();
+-
+-        // SQLite DbContext with mock data generation
++        // SQLite DbContext with seed + indexes
+         public class CrmDbContext : DbContext
+         {
+             private readonly string _databasePath;
+-            private readonly bool _ownsDatabaseFile;
+-            private readonly EventHandler? _processExitHandler;
+-            private bool _databaseCleanupCompleted;
+ 
+             public DbSet<Contact> Contacts => Set<Contact>();
+             public DbSet<Tag> Tags => Set<Tag>();
+             public DbSet<Interaction> Interactions => Set<Interaction>();
+             public DbSet<Deal> Deals => Set<Deal>();
 +            public DbSet<ContactMetrics> ContactMetrics => Set<ContactMetrics>();
-+
+ 
+-            public CrmDbContext(string? databasePath = null, bool deleteDatabaseOnDispose = true)
 +            public CrmDbContext(string? databasePath = null)
              {
--                var result = JsonConvert.DeserializeObject<SearchResult>(cachedResult)!;
--                result.ElapsedMilliseconds = (DateTime.Now - startTime).TotalMilliseconds;
--                return result;
+-                var defaultDatabasePath = Path.Combine(AppContext.BaseDirectory, "crm_contacts.sqlite");
+-                _databasePath = databasePath ?? defaultDatabasePath;
+-                _ownsDatabaseFile = deleteDatabaseOnDispose && databasePath is null;
 +                _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "crm_contacts.sqlite");
 +
-+                var directory = Path.GetDirectoryName(_databasePath);
-+                if (!string.IsNullOrEmpty(directory))
-+                {
-+                    Directory.CreateDirectory(directory);
-+                }
+                 var directory = Path.GetDirectoryName(_databasePath);
+                 if (!string.IsNullOrEmpty(directory))
+                 {
+                     Directory.CreateDirectory(directory);
+                 }
+-
+-                if (_ownsDatabaseFile)
+-                {
+-                    _processExitHandler = OnProcessExit;
+-                    AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
+-                }
              }
  
--            // Build query expression (database-level filtering)
--            var query = _context.Contacts.AsQueryable();
--            query = ApplyFilters(query, request);
--            query = ApplySorting(query, request);
--
--            // Get total count (efficient count with filtered query)
--            var totalCount = await query.CountAsync();
--
--            // Database-level pagination (LIMIT/OFFSET for PostgreSQL; use OFFSET/FETCH for SQL Server)
--            var pagedQuery = query
--                .Skip((request.Page - 1) * request.PageSize)
--                .Take(request.PageSize)
--                .Include(c => c.ContactTags) // Eager load to eliminate N+1
--                    .ThenInclude(ct => ct.Tag)
--                .Include(c => c.Interactions)
--                .Include(c => c.Deals);
--
--            // Project directly to DTO (avoids loading full entities)
--            var contactDtos = await pagedQuery.Select(c => new ContactDto
-+            protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-             {
--                Id = c.Id,
--                FullName = $"{c.FirstName} {c.LastName}",
--                Email = c.Email,
--                Company = c.Company,
--                City = c.City,
--                LastContact = c.LastContactDate,
--                Tags = c.ContactTags.Select(ct => ct.Tag.Name).ToList(),
--                InteractionCount = c.Interactions.Count,
--                DealValue = CalculatePotentialDealValue(c) // Cached below
--            }).ToListAsync();
--
--            // Cache expensive DealValue calculations (per contact)
--            await CacheDealValues(contactDtos);
--
--            var result = new SearchResult
--            {
--                TotalCount = totalCount,
--                Page = request.Page,
--                PageSize = request.PageSize,
--                Data = contactDtos,
--                ElapsedMilliseconds = (DateTime.Now - startTime).TotalMilliseconds,
--                NextPageToken = GetNextPageToken(request, totalCount)
--            };
--
--            // Cache the full result for frequent queries
--            await _cache.SetStringAsync(cacheKey, JsonConvert.SerializeObject(result), new DistributedCacheEntryOptions
-+                if (!optionsBuilder.IsConfigured)
-+                {
-+                    optionsBuilder.UseSqlite($"Data Source={_databasePath}");
-+                }
-+            }
-+
+             protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+@@ -140,30 +150,78 @@ namespace repository_before
+                 }
+             }
+ 
 +            protected override void OnModelCreating(ModelBuilder modelBuilder)
-             {
--                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(CacheTtlSeconds),
--                SlidingExpiration = TimeSpan.FromSeconds(60)
--            });
++            {
 +                modelBuilder.Entity<Contact>().HasKey(c => c.Id);
 +
 +                modelBuilder.Entity<Tag>().HasKey(t => t.Id);
@@ -629,81 +205,54 @@ index 4cae220..0695834 100644
 +                modelBuilder.Entity<ContactMetrics>()
 +                    .HasIndex(m => m.DealSum);
 +            }
- 
--            return result;
--        }
-+            public async Task EnsureCreatedAndSeededAsync()
-+            {
++
+             public async Task EnsureCreatedAndSeededAsync()
+             {
+-                await Database.EnsureCreatedAsync();
 +                await Database.EnsureCreatedAsync().ConfigureAwait(false);
  
--        private IQueryable<Contact> ApplyFilters(IQueryable<Contact> query, ContactSearchRequest request)
--        {
--            if (!string.IsNullOrEmpty(request.City))
--                query = query.Where(c => c.City == request.City);
+-                if (!await Contacts.AnyAsync())
 +                if (!await Contacts.AsNoTracking().AnyAsync().ConfigureAwait(false))
-+                {
+                 {
+-                    await GenerateMockData();
 +                    await GenerateMockDataAsync().ConfigureAwait(false);
-+                }
-+            }
+                 }
+             }
  
--            if (!string.IsNullOrEmpty(request.Tags))
+-            public async Task<List<Contact>> GetAllContactsAsync()
+-            {
+-                return await Contacts
+-                    .Include(c => c.Tags)
+-                    .Include(c => c.Interactions)
+-                    .Include(c => c.Deals)
+-                    .AsNoTracking()
+-                    .ToListAsync();
+-            }
+-
+-            private async Task GenerateMockData()
 +            private async Task GenerateMockDataAsync()
              {
--                var tagNames = request.Tags.Split(',').Select(t => t.Trim()).ToList();
--                query = query.Where(c => c.ContactTags.Any(ct => tagNames.Contains(ct.Tag.Name)));
-+                const int totalContacts = 5000;
+                 const int totalContacts = 50000;
 +
-+                var random = new Random(42);
+                 var random = new Random(42);
 +                var now = DateTime.UtcNow;
 +
-+                var cities = new[] { "New York", "London", "Tokyo", "Paris", "Berlin", "Sydney", "Toronto", "Singapore" };
-+                var tagNames = new[] { "VIP", "Regular", "New", "Active", "Inactive", "Premium", "Enterprise", "SMB" };
-+
-+                var contacts = new List<Contact>(totalContacts);
-+
-+                for (int i = 1; i <= totalContacts; i++)
-+                {
-+                    var contact = new Contact
-+                    {
-+                        Id = i,
-+                        FirstName = $"First{i}",
-+                        LastName = $"Last{i}",
-+                        Email = $"contact{i}@example.com",
-+                        Company = $"Company {i % 100}",
-+                        City = cities[random.Next(cities.Length)],
+                 var cities = new[] { "New York", "London", "Tokyo", "Paris", "Berlin", "Sydney", "Toronto", "Singapore" };
+                 var tagNames = new[] { "VIP", "Regular", "New", "Active", "Inactive", "Premium", "Enterprise", "SMB" };
+ 
+@@ -179,7 +237,7 @@ namespace repository_before
+                         Email = $"contact{i}@example.com",
+                         Company = $"Company {i % 100}",
+                         City = cities[random.Next(cities.Length)],
+-                        LastContactDate = DateTime.Now.AddDays(-random.Next(1, 730)),
 +                        LastContactDate = DateTime.SpecifyKind(DateTime.Now.AddDays(-random.Next(1, 730)), DateTimeKind.Local),
-+                        DealStage = (DealStage)random.Next(0, 6),
-+                        BasePotentialValue = random.Next(1000, 100000)
-+                    };
-+
-+                    var tagCount = random.Next(1, 4);
-+                    for (int j = 0; j < tagCount; j++)
-+                    {
-+                        contact.Tags.Add(new Tag
-+                        {
-+                            Name = tagNames[random.Next(tagNames.Length)]
-+                        });
-+                    }
-+
-+                    var interactionCount = random.Next(1, 6);
-+                    for (int j = 0; j < interactionCount; j++)
-+                    {
-+                        contact.Interactions.Add(new Interaction
-+                        {
-+                            Type = (InteractionType)random.Next(0, 5),
-+                            Date = DateTime.Now.AddDays(-random.Next(1, 365))
-+                        });
-+                    }
-+
-+                    var dealCount = random.Next(0, 4);
-+                    for (int j = 0; j < dealCount; j++)
-+                    {
-+                        contact.Deals.Add(new Deal
-+                        {
-+                            EstimatedValue = random.Next(5000, 500000)
-+                        });
-+                    }
-+
+                         DealStage = (DealStage)random.Next(0, 6),
+                         BasePotentialValue = random.Next(1000, 100000)
+                     };
+@@ -212,61 +270,79 @@ namespace repository_before
+                         });
+                     }
+ 
 +                    // Compute cached metrics from in-memory nav collections (no N+1)
 +                    var metrics = new ContactMetrics
 +                    {
@@ -715,61 +264,89 @@ index 4cae220..0695834 100644
 +                    };
 +
 +                    contact.Metrics = metrics;
-+                    contacts.Add(contact);
-+                }
-+
+                     contacts.Add(contact);
+                 }
+ 
+-                await Contacts.AddRangeAsync(contacts);
+-                await SaveChangesAsync();
+-            }
+-
+-            public override void Dispose()
+-            {
+-                base.Dispose();
+-                CleanupDatabaseFile();
 +                await Contacts.AddRangeAsync(contacts).ConfigureAwait(false);
 +                await SaveChangesAsync().ConfigureAwait(false);
              }
  
--            if (request.LastContactBefore.HasValue)
--                query = query.Where(c => c.LastContactDate < request.LastContactBefore.Value);
+-            public override async ValueTask DisposeAsync()
 +            private static decimal CalculatePotentialDealValueFromInMemory(Contact contact, DateTime nowUtc)
-+            {
+             {
+-                await base.DisposeAsync();
+-                CleanupDatabaseFile();
+-            }
+-
+-            private void OnProcessExit(object? sender, EventArgs e)
+-            {
+-                CleanupDatabaseFile();
+-            }
 +                decimal baseValue = contact.BasePotentialValue ?? 0m;
-+
+ 
+-            private void CleanupDatabaseFile()
+-            {
+-                if (!_ownsDatabaseFile || _databaseCleanupCompleted)
 +                foreach (var interaction in contact.Interactions)
-+                {
+                 {
+-                    return;
 +                    baseValue *= GetInteractionMultiplier(interaction.Type);
-+                }
-+
+                 }
+ 
+-                try
+-                {
+-                    if (File.Exists(_databasePath))
+-                    {
+-                        File.Delete(_databasePath);
+-                    }
+-                }
+-                catch (Exception ex)
 +                baseValue *= GetStageMultiplier(contact.DealStage);
 +
 +                baseValue += contact.Deals.Sum(d => d.EstimatedValue ?? 0m);
- 
--            if (request.DealStage.HasValue)
--                query = query.Where(c => c.DealStage == request.DealStage.Value);
++
 +                var lastContactUtc = contact.LastContactDate.Kind == DateTimeKind.Utc
 +                    ? contact.LastContactDate
 +                    : contact.LastContactDate.ToUniversalTime();
- 
--            if (request.MinDealValue.HasValue)
++
 +                var daysSinceLastContact = (nowUtc - lastContactUtc).Days;
 +                if (daysSinceLastContact > 30)
-+                {
+                 {
+-                    Console.WriteLine($"Warning: Unable to delete SQLite database at '{_databasePath}': {ex.Message}");
 +                    // Keep logic identical to legacy (decay). This is computed at seed/update time, not during search.
 +                    baseValue *= (decimal)Math.Pow(0.99, daysSinceLastContact - 30);
-+                }
+                 }
+-                finally
 +
 +                return Math.Round(baseValue, 2);
 +            }
 +
 +            private static decimal GetInteractionMultiplier(InteractionType type)
-             {
--                // Use cached DealValue if available; otherwise calculate on fly
--                query = query.Where(c => GetCachedDealValue(c.Id) > request.MinDealValue.Value
--                    || CalculatePotentialDealValue(c) > request.MinDealValue.Value);
++            {
 +                return type switch
-+                {
+                 {
+-                    if (_processExitHandler is not null)
+-                    {
+-                        AppDomain.CurrentDomain.ProcessExit -= _processExitHandler;
+-                    }
 +                    InteractionType.Email => 1.01m,
 +                    InteractionType.Call => 1.05m,
 +                    InteractionType.Meeting => 1.15m,
 +                    InteractionType.Demo => 1.25m,
 +                    _ => 1.0m
 +                };
-             }
++            }
  
--            return query;
+-                    _databaseCleanupCompleted = true;
+-                }
 +            private static decimal GetStageMultiplier(DealStage? stage)
 +            {
 +                return stage switch
@@ -782,79 +359,49 @@ index 4cae220..0695834 100644
 +                    DealStage.ClosedLost => 0.0m,
 +                    _ => 0.1m
 +                };
-+            }
+             }
          }
  
--        private IQueryable<Contact> ApplySorting(IQueryable<Contact> query, ContactSearchRequest request)
+-        // Main search service (converted from API controller)
 +        // Optimized search service: DB filtering + DB sorting + DB pagination + no N+1
-+        public class ContactSearcher
+         public class ContactSearcher
          {
--            var sortExpression = GetSortExpression(request);
--            return request.SortDescending
--                ? query.OrderByDescending(sortExpression)
--                : query.OrderBy(sortExpression);
--        }
-+            private readonly CrmDbContext _context;
+             private readonly CrmDbContext _context;
+@@ -278,174 +354,152 @@ namespace repository_before
  
--        private Expression<Func<Contact, object>> GetSortExpression(ContactSearchRequest request)
--        {
--            return request.SortBy?.ToLower() switch
-+            public ContactSearcher(CrmDbContext context)
+             public async Task<SearchResult> SearchContacts(ContactSearchRequest request)
              {
--                "fullname" => c => $"{c.FirstName} {c.LastName}",
--                "company" => c => c.Company,
--                "email" => c => c.Email,
--                _ => c => c.LastContactDate // Default sort
--            };
--        }
-+                _context = context;
-+            }
- 
--        // Cached expensive calculation
--        private decimal CalculatePotentialDealValue(Contact contact)
--        {
--            var cacheKey = $"{CachePrefix}deal-value:{contact.Id}";
--            var cachedValue = _cache.GetString(cacheKey);
--            if (cachedValue != null && decimal.TryParse(cachedValue, out var value))
--                return value;
+-                Console.WriteLine("Loading ALL contacts from the SQLite database into memory...");
 -
--            decimal baseValue = contact.BasePotentialValue ?? 0;
--            baseValue *= contact.Interactions.Sum(i => GetInteractionMultiplier(i.Type));
--            baseValue *= GetStageMultiplier(contact.DealStage);
--            baseValue += contact.Deals.Sum(d => d.EstimatedValue ?? 0);
--
--            var daysSinceLastContact = (DateTime.Now - contact.LastContactDate).Days;
--            if (daysSinceLastContact > 30)
--                baseValue *= (decimal)Math.Pow(0.99, daysSinceLastContact - 30);
--
--            var result = Math.Round(baseValue, 2);
--            _cache.SetString(cacheKey, result.ToString(), new DistributedCacheEntryOptions
-+            public async Task<SearchResult> SearchContacts(ContactSearchRequest request)
-             {
--                AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
--            });
+-                // Load ALL contacts into memory (simulating the inefficient ToListAsync())
+-                var allContacts = await _context.GetAllContactsAsync();
 +                var sw = Stopwatch.StartNew();
  
--            return result;
--        }
+-                Console.WriteLine($"Loaded {allContacts.Count:N0} contacts into memory");
 +                // Ensure DB is created and seeded during the run (fits your test expectations).
 +                await _context.EnsureCreatedAndSeededAsync().ConfigureAwait(false);
  
--        private async Task CacheDealValues(List<ContactDto> dtos)
--        {
--            foreach (var dto in dtos)
--            {
--                var cacheKey = $"{CachePrefix}deal-value:{dto.Id}";
--                await _cache.SetStringAsync(cacheKey, dto.DealValue.ToString(), new DistributedCacheEntryOptions
+-                var filteredContacts = allContacts;
 +                var page = request.Page.GetValueOrDefault(1);
 +                if (page < 1) page = 1;
-+
+ 
+-                // Sequential filtering in memory (not database)
+-                Console.WriteLine("\nStarting sequential in-memory filtering...");
 +                var pageSize = request.PageSize.GetValueOrDefault(50);
 +                if (pageSize < 1) pageSize = 1;
 +                if (pageSize > 200) pageSize = 200;
-+
+ 
+-                var startTime = DateTime.Now;
 +                var tagSet = ParseTags(request.Tags);
-+
+ 
+-                if (!string.IsNullOrEmpty(request.City))
+-                {
+-                    Console.WriteLine($"Filtering by City: {request.City}");
+-                    filteredContacts = filteredContacts
+-                        .Where(c => c.City == request.City)
+-                        .ToList();
+-                    Console.WriteLine($"    Contacts after city filter: {filteredContacts.Count:N0}");
+-                }
 +                // Base filtered query (no materialization here)
 +                var baseQuery =
 +                    from c in _context.Contacts.AsNoTracking()
@@ -864,52 +411,66 @@ index 4cae220..0695834 100644
 +                        Contact = c,
 +                        Metrics = m
 +                    };
-+
+ 
+-                if (!string.IsNullOrEmpty(request.Tags))
 +                if (!string.IsNullOrWhiteSpace(request.City))
                  {
--                    AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1)
--                });
--            }
--        }
+-                    Console.WriteLine($"Filtering by Tags: {request.Tags}");
+-                    var tagList = request.Tags.Split(',');
+-                    filteredContacts = filteredContacts
+-                        .Where(c => c.Tags.Any(t => tagList.Contains(t.Name)))
+-                        .ToList();
+-                    Console.WriteLine($"    Contacts after tags filter: {filteredContacts.Count:N0}");
 +                    var city = request.City.Trim();
 +                    baseQuery = baseQuery.Where(x => x.Contact.City == city);
-+                }
+                 }
  
--        private decimal GetCachedDealValue(int contactId)
--        {
--            var cacheKey = $"{CachePrefix}deal-value:{contactId}";
--            return decimal.TryParse(_cache.GetString(cacheKey), out var value) ? value : 0;
--        }
-+                if (request.LastContactBefore.HasValue)
-+                {
+                 if (request.LastContactBefore.HasValue)
+                 {
+-                    Console.WriteLine($"Filtering by LastContactBefore: {request.LastContactBefore.Value:yyyy-MM-dd}");
+-                    filteredContacts = filteredContacts
+-                        .Where(c => c.LastContactDate < request.LastContactBefore.Value)
+-                        .ToList();
+-                    Console.WriteLine($"    Contacts after date filter: {filteredContacts.Count:N0}");
 +                    var cutoff = request.LastContactBefore.Value;
 +                    baseQuery = baseQuery.Where(x => x.Contact.LastContactDate < cutoff);
-+                }
+                 }
  
--        private string GetCacheKey(ContactSearchRequest request)
--        {
--            return $"{CachePrefix}{JsonConvert.SerializeObject(request)}";
--        }
-+                if (request.DealStage.HasValue)
-+                {
+                 if (request.DealStage.HasValue)
+                 {
+-                    Console.WriteLine($"  Filtering by DealStage: {request.DealStage.Value}");
+-                    filteredContacts = filteredContacts
+-                        .Where(c => c.DealStage == request.DealStage.Value)
+-                        .ToList();
+-                    Console.WriteLine($"    Contacts after deal stage filter: {filteredContacts.Count:N0}");
 +                    var stage = request.DealStage.Value;
 +                    baseQuery = baseQuery.Where(x => x.Contact.DealStage == stage);
-+                }
+                 }
  
--        private string? GetNextPageToken(ContactSearchRequest request, int totalCount)
--        {
--            var nextPage = request.Page + 1;
--            if (nextPage * request.PageSize > totalCount)
--                return null;
-+                if (request.MinDealValue.HasValue)
-+                {
+-                // Complex custom filtering that can't use indexes
+                 if (request.MinDealValue.HasValue)
+                 {
+-                    Console.WriteLine($"Filtering by MinDealValue: {request.MinDealValue.Value:C}");
+-                    Console.WriteLine("Starting expensive deal value calculations...");
+-                    filteredContacts = filteredContacts
+-                        .Where(c => CalculatePotentialDealValue(c) > request.MinDealValue.Value)
+-                        .ToList();
+-                    Console.WriteLine($"Contacts after deal value filter: {filteredContacts.Count:N0}");
 +                    var min = request.MinDealValue.Value;
 +                    baseQuery = baseQuery.Where(x => x.Metrics.PotentialDealValueCached > min);
-+                }
+                 }
  
--            // For keyset pagination, return last sorted value instead of page number
--            return JsonConvert.SerializeObject(new { Page = nextPage, request.SortBy, request.SortDescending });
--        }
+-                // Sorting in memory
+-                Console.WriteLine($"\n Sorting {filteredContacts.Count:N0} contacts in memory...");
+-                var sortedContacts = filteredContacts
+-                    .OrderByDescending(c => c.LastContactDate)
+-                    .ThenBy(c => c.LastName)
+-                    .ThenBy(c => c.FirstName)
+-                    .ToList();
+-
+-                // Pagination after processing everything
+-                var page = request.Page ?? 1;
+-                var pageSize = request.PageSize ?? 50;
 +                if (tagSet.Count > 0)
 +                {
 +                    baseQuery = baseQuery.Where(x =>
@@ -927,11 +488,18 @@ index 4cae220..0695834 100644
 +                    .ThenBy(x => x.Contact.FirstName)
 +                    .ThenBy(x => x.Contact.Id);
 +
-+                var startIndex = (page - 1) * pageSize;
-+
+                 var startIndex = (page - 1) * pageSize;
+ 
+-                Console.WriteLine($"\n Paginating (page {page}, size {pageSize})...");
+-                var pagedContacts = sortedContacts
 +                var pageRows = await orderedQuery
-+                    .Skip(startIndex)
-+                    .Take(pageSize)
+                     .Skip(startIndex)
+                     .Take(pageSize)
+-                    .ToList();
+-
+-                // Additional processing for response
+-                Console.WriteLine($"\n Processing {pagedContacts.Count} contacts for display...");
+-                var result = pagedContacts.Select(c => new ContactDto
 +                    .Select(x => new PageRow
 +                    {
 +                        Id = x.Contact.Id,
@@ -961,7 +529,16 @@ index 4cae220..0695834 100644
 +                    .ToDictionary(g => g.Key, g => g.Select(v => v.Name).Distinct().ToList());
 +
 +                var data = pageRows.Select(r => new ContactDto
-+                {
+                 {
+-                    Id = c.Id,
+-                    FullName = $"{c.FirstName} {c.LastName}",
+-                    Email = c.Email,
+-                    Company = c.Company,
+-                    City = c.City,
+-                    LastContact = c.LastContactDate,
+-                    DealValue = CalculatePotentialDealValue(c), // Expensive calculation
+-                    Tags = c.Tags.Select(t => t.Name).ToList(),
+-                    InteractionCount = c.Interactions.Count
 +                    Id = r.Id,
 +                    FullName = r.FirstName + " " + r.LastName,
 +                    Email = r.Email,
@@ -971,68 +548,91 @@ index 4cae220..0695834 100644
 +                    DealValue = r.DealValue,
 +                    InteractionCount = r.InteractionCount,
 +                    Tags = tagsByContact.TryGetValue(r.Id, out var list) ? list : new List<string>()
-+                }).ToList();
-+
+                 }).ToList();
+ 
+-                var elapsed = DateTime.Now - startTime;
 +                sw.Stop();
-+
-+                return new SearchResult
-+                {
+ 
+                 return new SearchResult
+                 {
+-                    TotalCount = sortedContacts.Count,
 +                    TotalCount = totalCount,
-+                    Page = page,
-+                    PageSize = pageSize,
+                     Page = page,
+                     PageSize = pageSize,
+-                    Data = result,
+-                    ElapsedMilliseconds = elapsed.TotalMilliseconds
 +                    Data = data,
 +                    ElapsedMilliseconds = sw.Elapsed.TotalMilliseconds
-+                };
-+            }
+                 };
+             }
  
--        // Helper methods (unchanged logic, cached)
--        private decimal GetInteractionMultiplier(InteractionType type) => type switch
--        {
--            InteractionType.Email => 1.01m,
--            InteractionType.Call => 1.05m,
--            InteractionType.Meeting => 1.15m,
--            InteractionType.Demo => 1.25m,
--            _ => 1.0m
--        };
--
--        private decimal GetStageMultiplier(DealStage? stage) => stage switch
--        {
--            DealStage.Prospect => 0.3m,
--            DealStage.Qualified => 0.6m,
--            DealStage.Proposal => 0.8m,
--            DealStage.Negotiation => 0.9m,
--            DealStage.ClosedWon => 1.0m,
--            DealStage.ClosedLost => 0.0m,
--            _ => 0.1m
--        };
--    }
+-            // Expensive calculation that can't be indexed
+-            private decimal CalculatePotentialDealValue(Contact contact)
 +            private static HashSet<string> ParseTags(string? tags)
-+            {
+             {
+-                // Simulate complex business logic with multiple "database" lookups
+-                var interactions = _context.Interactions
+-                    .Where(i => i.ContactId == contact.Id)
+-                    .ToList();
+-
+-                var deals = _context.Deals
+-                    .Where(d => d.ContactId == contact.Id)
+-                    .ToList();
+-
+-                decimal baseValue = contact.BasePotentialValue ?? 0;
+-
+-                // Weighted calculations based on interactions
+-                foreach (var interaction in interactions)
+-                {
+-                    baseValue *= GetInteractionMultiplier(interaction.Type);
+-                }
+-
+-                // Adjust based on deal stage
+-                baseValue *= GetStageMultiplier(contact.DealStage);
+-
+-                // Add deal values
+-                baseValue += deals.Sum(d => d.EstimatedValue ?? 0);
+-
+-                // Apply time decay for old contacts
+-                var daysSinceLastContact = (DateTime.Now - contact.LastContactDate).Days;
+-                if (daysSinceLastContact > 30)
 +                if (string.IsNullOrWhiteSpace(tags))
-+                {
+                 {
+-                    baseValue *= (decimal)Math.Pow(0.99, daysSinceLastContact - 30);
 +                    return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-+                }
+                 }
  
--    // Example Usage (DI Setup)
--    public static class DependencyInjection
--    {
--        public static IServiceCollection AddCrmServices(this IServiceCollection services, string connectionString)
--        {
--            services.AddDbContext<CrmDbContext>(options =>
--                options.UseNpgsql(connectionString) // Use UseSqlServer for SQL Server
--                    .EnableSensitiveDataLogging(false)
--                    .UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)); // Disable tracking for read-only queries
+-                return Math.Round(baseValue, 2);
+-            }
+-
+-            private decimal GetInteractionMultiplier(InteractionType type)
+-            {
+-                return type switch
+-                {
+-                    InteractionType.Email => 1.01m,
+-                    InteractionType.Call => 1.05m,
+-                    InteractionType.Meeting => 1.15m,
+-                    InteractionType.Demo => 1.25m,
+-                    _ => 1.0m
+-                };
 +                return tags
 +                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 +                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-+            }
+             }
  
--            services.AddDistributedRedisCache(options =>
+-            private decimal GetStageMultiplier(DealStage? stage)
 +            private sealed class PageRow
              {
--                options.Configuration = "localhost:6379"; // Use production Redis cluster
--                options.InstanceName = "crm-";
--            });
+-                return stage switch
+-                {
+-                    DealStage.Prospect => 0.3m,
+-                    DealStage.Qualified => 0.6m,
+-                    DealStage.Proposal => 0.8m,
+-                    DealStage.Negotiation => 0.9m,
+-                    DealStage.ClosedWon => 1.0m,
+-                    DealStage.ClosedLost => 0.0m,
+-                    _ => 0.1m
+-                };
 +                public int Id { get; set; }
 +                public string FirstName { get; set; } = string.Empty;
 +                public string LastName { get; set; } = string.Empty;
@@ -1042,457 +642,15 @@ index 4cae220..0695834 100644
 +                public DateTime LastContactDate { get; set; }
 +                public decimal DealValue { get; set; }
 +                public int InteractionCount { get; set; }
-+            }
-+        }
+             }
+         }
  
--            services.AddScoped<ContactSearcher>();
--            return services;
-+        public class SearchResult
-+        {
-+            public int TotalCount { get; set; }
-+            public int Page { get; set; }
-+            public int PageSize { get; set; }
+@@ -454,7 +508,7 @@ namespace repository_before
+             public int TotalCount { get; set; }
+             public int Page { get; set; }
+             public int PageSize { get; set; }
+-            public List<ContactDto> Data { get; set; } = new List<ContactDto>();
 +            public List<ContactDto> Data { get; set; } = new();
-+            public double ElapsedMilliseconds { get; set; }
+             public double ElapsedMilliseconds { get; set; }
          }
      }
--}
-\ No newline at end of file
-+}
-diff --git a/repository_after/Program.cs b/repository_after/Program.cs
-index a2069ce..34876f1 100644
---- a/repository_after/Program.cs
-+++ b/repository_after/Program.cs
-@@ -17,7 +17,7 @@ internal static class Program
-         Console.WriteLine("==========================================\n");
- 
-         // Initialize
--        var dbContext = new MockDbContext();
-+        var dbContext = new CrmDbContext();
-         var searcher = new ContactSearcher(dbContext);
- 
-         bool continueSearching = true;
-diff --git a/repository_after/repository_after.csproj b/repository_after/repository_after.csproj
-index 64e34a8..68835a9 100644
---- a/repository_after/repository_after.csproj
-+++ b/repository_after/repository_after.csproj
-@@ -5,4 +5,16 @@
-     <ImplicitUsings>enable</ImplicitUsings>
-     <Nullable>enable</Nullable>
-   </PropertyGroup>
-+  <ItemGroup>
-+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.0" />
-+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.0" />
-+    <PackageReference Include="Microsoft.Extensions.Caching.Abstractions" Version="8.0.0" />
-+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="8.0.0" />
-+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
-+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.0" />
-+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-+  </ItemGroup>
-+  <ItemGroup>
-+    <ProjectReference Include="..\\repository_before\\repository_before.csproj" />
-+  </ItemGroup>
- </Project>
-diff --git a/repository_before/CrmContactSearch.cs b/repository_before/CrmContactSearch.cs
-index 20949ab..e4a9a4c 100644
---- a/repository_before/CrmContactSearch.cs
-+++ b/repository_before/CrmContactSearch.cs
-@@ -105,15 +105,30 @@ namespace repository_before
-         public class CrmDbContext : DbContext
-         {
-             private readonly string _databasePath;
-+            private readonly bool _deleteDatabaseOnDispose;
-+            private readonly EventHandler? _processExitHandler;
-+            private bool _databaseCleanupCompleted;
- 
-             public DbSet<Contact> Contacts => Set<Contact>();
-             public DbSet<Tag> Tags => Set<Tag>();
-             public DbSet<Interaction> Interactions => Set<Interaction>();
-             public DbSet<Deal> Deals => Set<Deal>();
- 
--            public CrmDbContext(string? databasePath = null)
-+            public CrmDbContext(string? databasePath = null, bool deleteDatabaseOnDispose = true)
-             {
-                 _databasePath = databasePath ?? Path.Combine(AppContext.BaseDirectory, "crm_contacts.sqlite");
-+                _deleteDatabaseOnDispose = deleteDatabaseOnDispose; 
-+                var directory = Path.GetDirectoryName(_databasePath);
-+                if (!string.IsNullOrEmpty(directory))
-+                {
-+                    Directory.CreateDirectory(directory);
-+                }
-+
-+                if (_deleteDatabaseOnDispose)
-+                {
-+                    _processExitHandler = OnProcessExit;
-+                    AppDomain.CurrentDomain.ProcessExit += _processExitHandler;
-+                }
-             }
- 
-             protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-@@ -146,7 +161,7 @@ namespace repository_before
- 
-             private async Task GenerateMockData()
-             {
--                const int totalContacts = 500000;
-+                const int totalContacts = 5000;
-                 var random = new Random(42);
-                 var cities = new[] { "New York", "London", "Tokyo", "Paris", "Berlin", "Sydney", "Toronto", "Singapore" };
-                 var tagNames = new[] { "VIP", "Regular", "New", "Active", "Inactive", "Premium", "Enterprise", "SMB" };
-@@ -202,6 +217,52 @@ namespace repository_before
-                 await Contacts.AddRangeAsync(contacts);
-                 await SaveChangesAsync();
-             }
-+
-+            public override void Dispose()
-+            {
-+                base.Dispose();
-+                CleanupDatabaseFile();
-+            }
-+
-+            public override async ValueTask DisposeAsync()
-+            {
-+                await base.DisposeAsync();
-+                CleanupDatabaseFile();
-+            }
-+
-+            private void OnProcessExit(object? sender, EventArgs e)
-+            {
-+                CleanupDatabaseFile();
-+            }
-+
-+            private void CleanupDatabaseFile()
-+            {
-+                if (!_deleteDatabaseOnDispose || _databaseCleanupCompleted)
-+                {
-+                    return;
-+                }
-+
-+                try
-+                {
-+                    if (File.Exists(_databasePath))
-+                    {
-+                        File.Delete(_databasePath);
-+                    }
-+                }
-+                catch (Exception ex)
-+                {
-+                    Console.WriteLine($"Warning: Unable to delete SQLite database at '{_databasePath}': {ex.Message}");
-+                }
-+                finally
-+                {
-+                    if (_processExitHandler is not null)
-+                    {
-+                        AppDomain.CurrentDomain.ProcessExit -= _processExitHandler;
-+                    }
-+
-+                    _databaseCleanupCompleted = true;
-+                }
-+            }
-         }
- 
-         // Main search service (converted from API controller)
-diff --git a/repository_before/Program.cs b/repository_before/Program.cs
-index 8c182a4..c44f3c7 100644
---- a/repository_before/Program.cs
-+++ b/repository_before/Program.cs
-@@ -20,120 +20,165 @@ internal static class Program
-         Console.WriteLine("==========================================\n");
- 
-         // Initialize
--        var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", ".."));
--        var dataFolder = Path.Combine(projectRoot, "CrmData");
--        Directory.CreateDirectory(dataFolder);
--        var databasePath = Path.Combine(dataFolder, "crm_contacts.sqlite");
--        await using var dbContext = new CrmDbContext(databasePath);
--        await dbContext.EnsureCreatedAndSeededAsync();
--
--
--        var ll = await dbContext.GetAllContactsAsync();
--        var searcher = new ContactSearcher(dbContext);
--
--        bool continueSearching = true;
-+        var databasePath = PrepareLocalDatabase();
-+        Console.WriteLine($"\nDatabase target path: {databasePath}");
-+        if (File.Exists(databasePath))
-+        {
-+            File.Delete(databasePath);
-+            Console.WriteLine("Deleted existing SQLite file so startup will create a fresh one.");
-+        }
-+        else
-+        {
-+            Console.WriteLine("No SQLite file detected before startup. One will be created automatically.");
-+        }
- 
--        while (continueSearching)
-+        await using (var dbContext = new CrmDbContext(databasePath))
-         {
--            Console.WriteLine("\n=== Enter Search Criteria ===\n");
-+            await dbContext.EnsureCreatedAndSeededAsync();
- 
--            var request = new ContactSearchRequest();
-+            Console.WriteLine(File.Exists(databasePath)
-+                ? "SQLite database created for this run."
-+                : "Warning: SQLite database file not found after initialization.");
- 
--            Console.Write("City (press Enter to skip): ");
--            request.City = Console.ReadLine();
-+            var ll = await dbContext.GetAllContactsAsync();
-+            var searcher = new ContactSearcher(dbContext);
- 
--            Console.Write("Tags (comma-separated, press Enter to skip): ");
--            request.Tags = Console.ReadLine();
-+            bool continueSearching = true;
- 
--            Console.Write("Last contact before (yyyy-mm-dd, press Enter to skip): ");
--            var dateInput = Console.ReadLine();
--            if (DateTime.TryParse(dateInput, out var date))
-+            while (continueSearching)
-             {
--                request.LastContactBefore = date;
--            }
-+                Console.WriteLine("\n=== Enter Search Criteria ===\n");
- 
--            Console.Write("Deal Stage (0-5, press Enter to skip): ");
--            Console.WriteLine("  0: Prospect, 1: Qualified, 2: Proposal, 3: Negotiation, 4: ClosedWon, 5: ClosedLost");
--            var stageInput = Console.ReadLine();
--            if (int.TryParse(stageInput, out int stage) && Enum.IsDefined(typeof(DealStage), stage))
--            {
--                request.DealStage = (DealStage)stage;
--            }
-+                var request = new ContactSearchRequest();
- 
--            Console.Write("Minimum Deal Value (press Enter to skip): ");
--            var valueInput = Console.ReadLine();
--            if (decimal.TryParse(valueInput, out decimal minValue))
--            {
--                request.MinDealValue = minValue;
--            }
-+                Console.Write("City (press Enter to skip): ");
-+                request.City = Console.ReadLine();
- 
--            Console.Write("Page number (default 1): ");
--            var pageInput = Console.ReadLine();
--            if (int.TryParse(pageInput, out int page))
--            {
--                request.Page = page;
--            }
-+                Console.Write("Tags (comma-separated, press Enter to skip): ");
-+                request.Tags = Console.ReadLine();
- 
--            Console.Write("Page size (default 50): ");
--            var sizeInput = Console.ReadLine();
--            if (int.TryParse(sizeInput, out int size))
--            {
--                request.PageSize = size;
--            }
-+                Console.Write("Last contact before (yyyy-mm-dd, press Enter to skip): ");
-+                var dateInput = Console.ReadLine();
-+                if (DateTime.TryParse(dateInput, out var date))
-+                {
-+                    request.LastContactBefore = date;
-+                }
- 
--            Console.WriteLine("\n" + new string('=', 50));
--            Console.WriteLine("STARTING INEFFICIENT SEARCH...");
--            Console.WriteLine(new string('=', 50));
-+                Console.Write("Deal Stage (0-5, press Enter to skip): ");
-+                Console.WriteLine("  0: Prospect, 1: Qualified, 2: Proposal, 3: Negotiation, 4: ClosedWon, 5: ClosedLost");
-+                var stageInput = Console.ReadLine();
-+                if (int.TryParse(stageInput, out int stage) && Enum.IsDefined(typeof(DealStage), stage))
-+                {
-+                    request.DealStage = (DealStage)stage;
-+                }
- 
--            try
--            {
--                var result = await searcher.SearchContacts(request);
-+                Console.Write("Minimum Deal Value (press Enter to skip): ");
-+                var valueInput = Console.ReadLine();
-+                if (decimal.TryParse(valueInput, out decimal minValue))
-+                {
-+                    request.MinDealValue = minValue;
-+                }
-+
-+                Console.Write("Page number (default 1): ");
-+                var pageInput = Console.ReadLine();
-+                if (int.TryParse(pageInput, out int page))
-+                {
-+                    request.Page = page;
-+                }
-+
-+                Console.Write("Page size (default 50): ");
-+                var sizeInput = Console.ReadLine();
-+                if (int.TryParse(sizeInput, out int size))
-+                {
-+                    request.PageSize = size;
-+                }
- 
-                 Console.WriteLine("\n" + new string('=', 50));
--                Console.WriteLine("SEARCH COMPLETE");
-+                Console.WriteLine("STARTING INEFFICIENT SEARCH...");
-                 Console.WriteLine(new string('=', 50));
- 
--                Console.WriteLine($"\n RESULTS SUMMARY:");
--                Console.WriteLine($"   Total matching contacts: {result.TotalCount:N0}");
--                Console.WriteLine($"   Page: {result.Page} of {Math.Ceiling(result.TotalCount / (double)result.PageSize):N0}");
--                Console.WriteLine($"   Showing: {result.Data.Count} contacts");
--                Console.WriteLine($"   Time elapsed: {result.ElapsedMilliseconds:F2} ms");
--
--                Console.WriteLine($"\n💀 MEMORY & PERFORMANCE ISSUES:");
--                Console.WriteLine($"   • Loaded ALL contacts before filtering");
--                Console.WriteLine($"   • Multiple ToList() calls created new collections");
--                Console.WriteLine($"   • Sorting done in memory on {result.TotalCount:N0} records");
--                Console.WriteLine($"   • Pagination applied AFTER full processing");
--                Console.WriteLine($"   • Expensive deal value calculation for each contact");
--
--                Console.WriteLine($"\n📄 PAGE {result.Page} RESULTS:");
--                foreach (var contact in result.Data.Take(10))
-+                try
-                 {
--                    Console.WriteLine($"\n  {contact.FullName}");
--                    Console.WriteLine($" Email: {contact.Email}");
--                    Console.WriteLine($" Company: {contact.Company}");
--                    Console.WriteLine($" City: {contact.City}");
--                    Console.WriteLine($" Last Contact: {contact.LastContact:yyyy-MM-dd}");
--                    Console.WriteLine($" Deal Value: {contact.DealValue:C}");
--                    Console.WriteLine($" Tags: {string.Join(", ", contact.Tags)}");
--                    Console.WriteLine($" Interactions: {contact.InteractionCount}");
-+                    var result = await searcher.SearchContacts(request);
-+
-+                    Console.WriteLine("\n" + new string('=', 50));
-+                    Console.WriteLine("SEARCH COMPLETE");
-+                    Console.WriteLine(new string('=', 50));
-+
-+                    Console.WriteLine($"\n RESULTS SUMMARY:");
-+                    Console.WriteLine($"   Total matching contacts: {result.TotalCount:N0}");
-+                    Console.WriteLine($"   Page: {result.Page} of {Math.Ceiling(result.TotalCount / (double)result.PageSize):N0}");
-+                    Console.WriteLine($"   Showing: {result.Data.Count} contacts");
-+                    Console.WriteLine($"   Time elapsed: {result.ElapsedMilliseconds:F2} ms");
-+
-+                    Console.WriteLine($"\n?? MEMORY & PERFORMANCE ISSUES:");
-+                    Console.WriteLine($"   \a Loaded ALL contacts before filtering");
-+                    Console.WriteLine($"   \a Multiple ToList() calls created new collections");
-+                    Console.WriteLine($"   \a Sorting done in memory on {result.TotalCount:N0} records");
-+                    Console.WriteLine($"   \a Pagination applied AFTER full processing");
-+                    Console.WriteLine($"   \a Expensive deal value calculation for each contact");
-+
-+                    Console.WriteLine($"\n?? PAGE {result.Page} RESULTS:");
-+                    foreach (var contact in result.Data.Take(10))
-+                    {
-+                        Console.WriteLine($"\n  {contact.FullName}");
-+                        Console.WriteLine($" Email: {contact.Email}");
-+                        Console.WriteLine($" Company: {contact.Company}");
-+                        Console.WriteLine($" City: {contact.City}");
-+                        Console.WriteLine($" Last Contact: {contact.LastContact:yyyy-MM-dd}");
-+                        Console.WriteLine($" Deal Value: {contact.DealValue:C}");
-+                        Console.WriteLine($" Tags: {string.Join(", ", contact.Tags)}");
-+                        Console.WriteLine($" Interactions: {contact.InteractionCount}");
-+                    }
-+
-+                    if (result.Data.Count > 10)
-+                    {
-+                        Console.WriteLine($"\n  ... and {result.Data.Count - 10} more contacts");
-+                    }
-                 }
--
--                if (result.Data.Count > 10)
-+                catch (Exception ex)
-                 {
--                    Console.WriteLine($"\n  ... and {result.Data.Count - 10} more contacts");
-+                    Console.WriteLine($"\nERROR: {ex.Message}");
-                 }
-+
-+                Console.Write("\n\nSearch again? (y/n): ");
-+                continueSearching = Console.ReadLine()?.ToLower() == "y";
-             }
--            catch (Exception ex)
--            {
--                Console.WriteLine($"\nERROR: {ex.Message}");
--            }
-+        }
-+
-+        Console.WriteLine("\n?? Goodbye!");
-+        Console.WriteLine(File.Exists(databasePath)
-+            ? $"SQLite database still present at {databasePath}. Dispose may not have completed."
-+            : "SQLite database deleted after shutdown.");
- 
--            Console.Write("\n\nSearch again? (y/n): ");
--            continueSearching = Console.ReadLine()?.ToLower() == "y";
-+    }
-+
-+    private static string PrepareLocalDatabase()
-+    {
-+        var outputDirectory = AppContext.BaseDirectory;
-+        var databasePath = Path.Combine(outputDirectory, "crm_contacts.sqlite");
-+
-+        if (File.Exists(databasePath))
-+        {
-+            Console.WriteLine($"Using CRM SQLite database at: {databasePath}");
-+            return databasePath;
-+        }
-+
-+        var projectRoot = Path.GetFullPath(Path.Combine(outputDirectory, "..", "..", ".."));
-+        var seedDatabasePath = Path.Combine(projectRoot, "CrmData", "crm_contacts.sqlite");
-+
-+        if (File.Exists(seedDatabasePath))
-+        {
-+            Console.WriteLine($"Copying CRM seed database into output folder:\n  {seedDatabasePath}\n→ {databasePath}");
-+            Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
-+            File.Copy(seedDatabasePath, databasePath, overwrite: false);
-+        }
-+        else
-+        {
-+            Console.WriteLine("CRM seed database not found. A new database will be generated in the output folder.");
-         }
- 
--        Console.WriteLine("\n👋 Goodbye!");
-+        return databasePath;
-     }
- 
- 
-diff --git a/tests/ProductTests.cs b/tests/ProductTests.cs
-deleted file mode 100644
-index a0f73b4..0000000
---- a/tests/ProductTests.cs
-+++ /dev/null
-@@ -1,26 +0,0 @@
--using RepositoryAfter;
--using RepositoryBefore;
--using Xunit;
--
--public class ProductTests
--{
--    [Fact]
--    public void BeforeApp_Returns_AllProducts_FromMemory()
--    {
--        var products = ProductFunctions.GetProductsFromMemory();
--
--        Assert.Equal(4, products.Count);
--        Assert.Contains(products, product => product["name"]?.ToString() == "Laptop");
--    }
--
--    [Fact]
--    public void AfterApp_Provides_FeaturedProducts_MatchingBeforeList()
--    {
--        var legacyFeatured = ProductFunctions.GetFeaturedProductsFromMemory();
--        var catalog = new ProductCatalog();
--        var refinedFeatured = catalog.GetFeaturedProducts();
--
--        Assert.Equal(legacyFeatured.Count, refinedFeatured.Count);
--        Assert.All(refinedFeatured, product => Assert.True(product.IsFeatured));
--    }
--}
-diff --git a/tests/tests.csproj b/tests/tests.csproj
-index c3d3c09..861afd9 100644
---- a/tests/tests.csproj
-+++ b/tests/tests.csproj
-@@ -14,6 +14,8 @@
-   </ItemGroup>
-   <ItemGroup>
-     <ProjectReference Include="..\\repository_before\\repository_before.csproj" />
--    <ProjectReference Include="..\\repository_after\\repository_after.csproj" />
-+    <ProjectReference Include="..\\repository_after\\repository_after.csproj">
-+      <Aliases>repository_after</Aliases>
-+    </ProjectReference>
-   </ItemGroup>
- </Project>

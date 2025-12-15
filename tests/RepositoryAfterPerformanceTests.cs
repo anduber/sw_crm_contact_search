@@ -14,7 +14,7 @@ public class RepositoryAfterPerformanceTests
 {
     [Fact]
     [Trait("Category", "Performance")]
-    public async Task RepositoryAfter_SearchContacts_UsesExistingDatabaseWithinBudget()
+    public async Task RepositoryAfter_SearchContacts_ShouldTakeLessThanMaxDuration()
     {
         var dbPath = CreateTemporaryDatabasePath();
         Assert.False(File.Exists(dbPath), "Ephemeral CRM database should not exist before the run.");
