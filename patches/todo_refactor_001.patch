@@ -1,0 +1,219 @@
+diff --git a/repository_after/app/init.py b/repository_after/app/init.py
+new file mode 100644
+index 0000000..ba4b642
+--- /dev/null
++++ b/repository_after/app/init.py
+@@ -0,0 +1,13 @@
++from flask import Flask
++from flask_sqlalchemy import SQLAlchemy
++
++db = SQLAlchemy()
++
++def create_app():
++    app = Flask(__name__)
++    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///repository_after/db.sqlite'
++    app.config['SECRET_KEY'] = 'secret'  # For sessions
++    db.init_app(app)
++    from .routes import init_routes
++    init_routes(app)
++    return app
+\ No newline at end of file
+diff --git a/repository_after/app/main.py b/repository_after/app/main.py
+new file mode 100644
+index 0000000..89d7ece
+--- /dev/null
++++ b/repository_after/app/main.py
+@@ -0,0 +1,6 @@
++from . import create_app
++
++app = create_app()
++
++if __name__ == '__main__':
++    app.run(debug=True)
+\ No newline at end of file
+diff --git a/repository_after/app/models.py b/repository_after/app/models.py
+new file mode 100644
+index 0000000..b483836
+--- /dev/null
++++ b/repository_after/app/models.py
+@@ -0,0 +1,12 @@
++from . import db
++
++class Todo(db.Model):
++    id = db.Column(db.Integer, primary_key=True)
++    text = db.Column(db.String(200))
++    priority = db.Column(db.Integer)
++    deadline = db.Column(db.String(10))
++
++    def __init__(self, text, priority, deadline):
++        self.text = text
++        self.priority = priority
++        self.deadline = deadline
+\ No newline at end of file
+diff --git a/repository_after/app/routes.py b/repository_after/app/routes.py
+new file mode 100644
+index 0000000..16fb44a
+--- /dev/null
++++ b/repository_after/app/routes.py
+@@ -0,0 +1,42 @@
++from flask import render_template, request, redirect, url_for, session
++from .models import db, Todo
++from .utils import login_required
++from werkzeug.security import generate_password_hash, check_password_hash
++
++def init_routes(app):
++    @app.route('/login', methods=['GET', 'POST'])
++    def login():
++        if request.method == 'POST':
++            if check_password_hash(generate_password_hash('pass'), request.form['password']):  # Proper hashing
++                session['user'] = 'authenticated'
++                return redirect('/')
++        return 'Login: <form method="POST"><input name="password"><button>Login</button></form>'
++
++    @app.route('/', methods=['GET'])
++    @login_required
++    def index():
++        todos = Todo.query.all()
++        return render_template('index.html', todos=todos)
++
++    @app.route('/add', methods=['POST'])
++    @login_required
++    def add():
++        todo = Todo(text=request.form['text'], priority=int(request.form.get('priority', 0)), deadline=request.form.get('deadline', ''))
++        db.session.add(todo)
++        db.session.commit()
++        return redirect(url_for('index'))
++
++    @app.route('/delete/<int:id>', methods=['POST'])
++    @login_required
++    def delete(id):
++        todo = Todo.query.get_or_404(id)
++        db.session.delete(todo)
++        db.session.commit()
++        return redirect(url_for('index'))
++
++    @app.route('/search', methods=['GET'])
++    @login_required
++    def search():
++        query = request.args.get('query', '')
++        todos = Todo.query.filter(Todo.text.like(f'%{query}%')).all()  # Optimized with index if added
++        return render_template('index.html', todos=todos)
+\ No newline at end of file
+diff --git a/repository_after/app/utils.py b/repository_after/app/utils.py
+new file mode 100644
+index 0000000..e99da80
+--- /dev/null
++++ b/repository_after/app/utils.py
+@@ -0,0 +1,10 @@
++from flask import redirect, url_for
++from functools import wraps
++
++def login_required(f):
++    @wraps(f)
++    def decorated_function(*args, **kwargs):
++        if 'user' not in session:
++            return redirect(url_for('login'))
++        return f(*args, **kwargs)
++    return decorated_function
+\ No newline at end of file
+diff --git a/repository_before/app.py b/repository_before/app.py
+deleted file mode 100644
+index e4a247a..0000000
+--- a/repository_before/app.py
++++ /dev/null
+@@ -1,57 +0,0 @@
+-from flask import Flask, request, render_template_string, redirect
+-import sqlite3
+-from werkzeug.security import check_password_hash
+-from base64 import b64decode
+-from auth import check_auth  # Duplicated auth import
+-
+-app = Flask(__name__)
+-DB = 'repository_before/db.sqlite'
+-
+-conn = sqlite3.connect(DB, check_same_thread=False)
+-conn.execute('CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY, text TEXT, priority INTEGER, deadline TEXT)')
+-conn.commit()
+-
+-HTML = """
+-<h1>Todo List</h1>
+-<form method="POST" action="/add">
+-    <input name="text" placeholder="Todo">
+-    <input name="priority" type="number" placeholder="Priority">
+-    <input name="deadline" type="date">
+-    <button>Add</button>
+-</form>
+-<ul>{% for todo in todos %}<li>{{ todo[1] }} (P:{{ todo[2] }}, D:{{ todo[3] }}) <form method="POST" action="/delete/{{ todo[0] }}"><button>Delete</button></form></li>{% endfor %}</ul>
+-<form method="GET" action="/search"><input name="query" placeholder="Search"><button>Search</button></form>
+-"""
+-
+-@app.route('/', methods=['GET'])
+-def index():
+-    if not check_auth(request): return 'Unauthorized', 401
+-    todos = conn.execute('SELECT * FROM todos').fetchall()  # Inefficient full scan
+-    return render_template_string(HTML, todos=todos)
+-
+-@app.route('/add', methods=['POST'])
+-def add():
+-    if not check_auth(request): return 'Unauthorized', 401
+-    text = request.form['text']
+-    priority = request.form.get('priority', 0)
+-    deadline = request.form.get('deadline', '')
+-    conn.execute(f"INSERT INTO todos (text, priority, deadline) VALUES ('{text}', {priority}, '{deadline}')")  # SQL injection risk!
+-    conn.commit()
+-    return redirect('/')
+-
+-@app.route('/delete/<int:id>', methods=['GET', 'POST'])
+-def delete(id):
+-    if not check_auth(request): return 'Unauthorized', 401
+-    conn.execute(f'DELETE FROM todos WHERE id = {id}')  # Insecure
+-    conn.commit()
+-    return redirect('/')
+-
+-@app.route('/search', methods=['GET'])
+-def search():
+-    if not check_auth(request): return 'Unauthorized', 401
+-    query = request.args.get('query', '')
+-    todos = conn.execute(f"SELECT * FROM todos WHERE text LIKE '%{query}%'").fetchall()  # Inefficient, no index
+-    return render_template_string(HTML, todos=todos)
+-
+-if __name__ == '__main__':
+-    app.run(debug=True)
+\ No newline at end of file
+diff --git a/repository_before/auth.py b/repository_before/auth.py
+deleted file mode 100644
+index f94d704..0000000
+--- a/repository_before/auth.py
++++ /dev/null
+@@ -1,8 +0,0 @@
+-from flask import request
+-from werkzeug.security import check_password_hash
+-
+-def check_auth(request):
+-    auth = request.authorization
+-    if not auth or not check_password_hash('hashedpass', auth.password):  # Hardcoded, duplicated logic
+-        return False
+-    return True
+\ No newline at end of file
+diff --git a/repository_after/templates/index.html b/repository_after/templates/index.html
+new file mode 100644
+index 0000000..4a4679e
+--- /dev/null
++++ b/repository_after/templates/index.html
+@@ -0,0 +1,15 @@
++<h1>Todo List</h1>
++<form method="POST" action="{{ url_for('add') }}">
++    <input name="text" placeholder="Todo" required>
++    <input name="priority" type="number" placeholder="Priority">
++    <input name="deadline" type="date">
++    <button>Add</button>
++</form>
++<ul>
++    {% for todo in todos %}
++    <li>{{ todo.text }} (P:{{ todo.priority }}, D:{{ todo.deadline }}) 
++        <form method="POST" action="{{ url_for('delete', id=todo.id) }}"><button>Delete</button></form>
++    </li>
++    {% endfor %}
++</ul>
++<form method="GET" action="{{ url_for('search') }}"><input name="query" placeholder="Search"><button>Search</button></form>
+\ No newline at end of file

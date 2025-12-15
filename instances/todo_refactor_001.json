@@ -1,0 +1,10 @@
+{
+  "instance_id": "todo_refactor_001",
+  "problem_statement": "Refactor the messy monolithic Flask Todo app (with SQLite DB, insecure auth, duplicated code, inefficient queries) into a modular, secure, optimized structure. Maintain functionality: add/view/delete/search todos with priorities/deadlines. Use SQLAlchemy, session auth, caching, and best practices. Ensure no functional changes but improve performance/security/maintainability.",
+  "base_commit": "repository_before",
+  "test_patch": "tests/",
+  "repo": "https://github.com/yourusernameBrook-Hassen/todo-refactor-dataset",  
+  "environment_setup": "Dockerfile",
+  "FAIL_TO_PASS": ["test_functionality.py"],
+  "PASS_TO_PASS": ["test_refactor_quality.py"]
+}

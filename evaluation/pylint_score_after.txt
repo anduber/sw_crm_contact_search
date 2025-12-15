@@ -1,0 +1,35 @@
+************* Module app.init
+repository_after\app\init.py:13:0: C0304: Final newline missing (missing-final-newline)
+repository_after\app\init.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+repository_after\app\init.py:2:0: E0401: Unable to import 'flask_sqlalchemy' (import-error)
+repository_after\app\init.py:6:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_after\app\init.py:11:4: C0415: Import outside toplevel (routes.init_routes) (import-outside-toplevel)
+************* Module app.main
+repository_after\app\main.py:6:0: C0304: Final newline missing (missing-final-newline)
+repository_after\app\main.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+repository_after\app\main.py:1:0: E0611: No name 'create_app' in module '' (no-name-in-module)
+************* Module app.models
+repository_after\app\models.py:12:0: C0304: Final newline missing (missing-final-newline)
+repository_after\app\models.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+repository_after\app\models.py:1:0: E0611: No name 'db' in module '' (no-name-in-module)
+repository_after\app\models.py:3:0: C0115: Missing class docstring (missing-class-docstring)
+repository_after\app\models.py:3:0: R0903: Too few public methods (0/2) (too-few-public-methods)
+************* Module app.routes
+repository_after\app\routes.py:10:0: C0301: Line too long (111/100) (line-too-long)
+repository_after\app\routes.py:24:0: C0301: Line too long (136/100) (line-too-long)
+repository_after\app\routes.py:41:0: C0301: Line too long (102/100) (line-too-long)
+repository_after\app\routes.py:42:0: C0304: Final newline missing (missing-final-newline)
+repository_after\app\routes.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+repository_after\app\routes.py:6:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_after\app\routes.py:31:15: W0622: Redefining built-in 'id' (redefined-builtin)
+repository_after\app\routes.py:4:0: C0411: third party import "werkzeug.security.generate_password_hash" should be placed before local imports "models.db", "utils.login_required" (wrong-import-order)
+************* Module app.utils
+repository_after\app\utils.py:10:0: C0304: Final newline missing (missing-final-newline)
+repository_after\app\utils.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+repository_after\app\utils.py:4:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_after\app\utils.py:7:25: E0602: Undefined variable 'session' (undefined-variable)
+repository_after\app\utils.py:2:0: C0411: standard import "functools.wraps" should be placed before third party import "flask.redirect" (wrong-import-order)
+
+-----------------------------------
+Your code has been rated at 3.11/10
+

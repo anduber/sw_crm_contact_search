@@ -1,0 +1,13 @@
+# Build outputs
+bin/
+obj/
+*/bin/
+*/obj/
+
+# IDE caches
+.vs/
+
+repository_before/CrmData/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

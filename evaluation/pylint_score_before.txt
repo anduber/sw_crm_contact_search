@@ -1,0 +1,30 @@
+************* Module app
+repository_before\app.py:11:0: C0301: Line too long (117/100) (line-too-long)
+repository_before\app.py:38:0: C0301: Line too long (132/100) (line-too-long)
+repository_before\app.py:53:0: C0301: Line too long (112/100) (line-too-long)
+repository_before\app.py:57:0: C0304: Final newline missing (missing-final-newline)
+repository_before\app.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+repository_before\app.py:27:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_before\app.py:28:32: C0321: More than one statement on a single line (multiple-statements)
+repository_before\app.py:33:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_before\app.py:34:32: C0321: More than one statement on a single line (multiple-statements)
+repository_before\app.py:43:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_before\app.py:43:11: W0622: Redefining built-in 'id' (redefined-builtin)
+repository_before\app.py:44:32: C0321: More than one statement on a single line (multiple-statements)
+repository_before\app.py:50:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_before\app.py:51:32: C0321: More than one statement on a single line (multiple-statements)
+repository_before\app.py:2:0: C0411: standard import "sqlite3" should be placed before third party import "flask.Flask" (wrong-import-order)
+repository_before\app.py:4:0: C0411: standard import "base64.b64decode" should be placed before third party imports "flask.Flask", "werkzeug.security.check_password_hash" (wrong-import-order)
+repository_before\app.py:3:0: W0611: Unused check_password_hash imported from werkzeug.security (unused-import)
+repository_before\app.py:4:0: W0611: Unused b64decode imported from base64 (unused-import)
+************* Module auth
+repository_before\auth.py:6:0: C0301: Line too long (103/100) (line-too-long)
+repository_before\auth.py:8:0: C0304: Final newline missing (missing-final-newline)
+repository_before\auth.py:1:0: C0114: Missing module docstring (missing-module-docstring)
+repository_before\auth.py:4:0: C0116: Missing function or method docstring (missing-function-docstring)
+repository_before\auth.py:4:15: W0621: Redefining name 'request' from outer scope (line 1) (redefined-outer-name)
+repository_before\auth.py:1:0: W0611: Unused request imported from flask (unused-import)
+
+-----------------------------------
+Your code has been rated at 4.78/10
+

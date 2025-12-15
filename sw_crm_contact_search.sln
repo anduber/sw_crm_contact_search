@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36408.4 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "sw_crm_contact_search", "sw_crm_contact_search.csproj", "{4CD5025A-6C61-DE17-667B-39947AD37FCD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{4CD5025A-6C61-DE17-667B-39947AD37FCD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4CD5025A-6C61-DE17-667B-39947AD37FCD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4CD5025A-6C61-DE17-667B-39947AD37FCD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4CD5025A-6C61-DE17-667B-39947AD37FCD}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {5487D518-5B03-45D0-9DEA-16EAF38E1D58}
+	EndGlobalSection
+EndGlobal
