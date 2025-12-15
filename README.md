@@ -28,13 +28,13 @@ dotnet run --project repository_after/repository_after.csproj
 dotnet test tests/tests.csproj
 ```
 
-## Containers
-
-- `docker build -t product-console .` builds the .NET image and runs the Release build steps.
-- `docker run --rm product-console` executes the xUnit suite inside the container.
-- `docker-compose up` launches the interactive launcher via `dotnet run` inside the container (bind mounted to the local workspace).
-
 ## Tasks
 
 1. Run the Dockerized app with `docker compose up app` (or `docker-compose up app` on older installs) to start the launcher container.
 2. Test the Docker image with `docker compose run --rm tests` to execute `dotnet test` inside the build container and remove it afterward.
+
+## Containers
+
+- `docker build -t sw_crm_contact_search .` builds the .NET image and runs the Release build steps.
+- `docker run --rm sw_crm_contact_search` executes the xUnit suite inside the container.
+- `docker compose up app` (or `docker-compose up app`) launches the interactive launcher via `dotnet run` inside the container (bind mounted to the local workspace).
